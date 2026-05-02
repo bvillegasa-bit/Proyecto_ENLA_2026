@@ -117,13 +117,7 @@ class ModelTrainer:
         self.max_iterations = max_iterations
         self.learn_rate = learn_rate
 
-        logger.info("ModelTrainer initialized",
-                    project_id=self.project_id,
-                    dataset_id=self.dataset_id,
-                    areas=self.AREAS,
-                    l2_reg=self.l2_reg,
-                    max_iterations=self.max_iterations,
-                    learn_rate=self.learn_rate)
+        logger.info(f"ModelTrainer initialized | project_id={self.project_id} dataset_id={self.dataset_id} areas={self.AREAS} l2_reg={self.l2_reg} max_iterations={self.max_iterations} learn_rate={self.learn_rate}")
 
     def _get_bq_manager(self) -> BigQueryClientManager:
         """Get or create BigQuery manager."""
@@ -171,7 +165,7 @@ class ModelTrainer:
         WHERE area = '{area}'
         """
 
-        logger.info("Training query built", area=area, model_name=model_name)
+        logger.info(f"Training query built | area={area} model_name={model_name}")
         return query
 
     def _get_model_name(self, area: str, model_version: str = 'v1') -> str:
@@ -206,7 +200,7 @@ class ModelTrainer:
 
             # Build and execute training query
             training_query = self._build_training_query(area)
-            logger.info("Executing training query", area=area)
+            logger.info(f"Executing training query | area={area}")
 
             job = bq_manager.get_client().query(training_query)
             job.result()  # Wait for training to complete
@@ -225,9 +219,7 @@ class ModelTrainer:
             result.status = "success"
             result.training_stats = training_stats
 
-            logger.info(f"Model training completed for area '{area}'",
-                        duration=duration,
-                        job_id=job.job_id)
+            logger.info(f"Model training completed for area '{area}' | duration={duration} job_id={job.job_id}")
 
         except BigQueryConnectionError as e:
             error_msg = f"BigQuery connection error training model for '{area}': {str(e)}"
@@ -293,11 +285,7 @@ class ModelTrainer:
         else:
             pipeline_result.status = "failed"
 
-        logger.info("Model Training Pipeline completed",
-                    models_trained=pipeline_result.models_trained,
-                    models_failed=pipeline_result.models_failed,
-                    total_duration=pipeline_result.total_duration_seconds,
-                    status=pipeline_result.status)
+        logger.info(f"Model Training Pipeline completed | models_trained={pipeline_result.models_trained} models_failed={pipeline_result.models_failed} total_duration={pipeline_result.total_duration_seconds} status={pipeline_result.status}")
 
         return pipeline_result
 
@@ -352,11 +340,7 @@ class ModelTrainer:
                 },
             }
 
-            logger.info(f"Model evaluation for '{area}' complete",
-                        accuracy=evaluation['accuracy'],
-                        precision=evaluation['precision'],
-                        recall=evaluation['recall'],
-                        f1_score=evaluation['f1_score'])
+            logger.info(f"Model evaluation for '{area}' complete | accuracy={evaluation['accuracy']} precision={evaluation['precision']} recall={evaluation['recall']} f1_score={evaluation['f1_score']}")
 
             return evaluation
 
@@ -391,8 +375,7 @@ class ModelTrainer:
             try:
                 evaluation = self.evaluate_model(area, model_version)
                 results[area] = evaluation
-                logger.info(f"Area '{area}' evaluated",
-                            accuracy=evaluation['accuracy'])
+                logger.info(f"Area '{area}' evaluated | accuracy={evaluation['accuracy']}")
             except ModelEvaluationError as e:
                 logger.error(f"Failed to evaluate '{area}': {str(e)}")
                 results[area] = {'area': area, 'error': str(e)}
@@ -425,8 +408,7 @@ class ModelTrainer:
 
             weights_df = bq_manager.query(weights_query)
 
-            logger.info(f"Feature weights retrieved for '{area}'",
-                        features=len(weights_df))
+            logger.info(f"Feature weights retrieved for '{area}' | features={len(weights_df)}")
 
             return weights_df
 

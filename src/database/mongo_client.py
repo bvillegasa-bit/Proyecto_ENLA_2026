@@ -81,7 +81,7 @@ class MongoClientManager:
             logger.info("MongoDB connection test passed")
             return True
         except Exception as e:
-            logger.error("MongoDB connection test failed", error=str(e))
+            logger.error(f"MongoDB connection test failed | error={str(e)}")
             return False
     
     def get_database(self, db_name: str):

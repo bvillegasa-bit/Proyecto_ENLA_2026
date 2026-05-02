@@ -134,11 +134,7 @@ class AlertManager:
         self.email_from = email_from or settings.ALERT_EMAIL_FROM
         self.email_to = email_to or settings.ALERT_EMAIL_TO
 
-        logger.info("AlertManager initialized",
-                    project_id=self.project_id,
-                    dataset_id=self.dataset_id,
-                    email_from=self.email_from,
-                    recipients_count=len(self.email_to) if self.email_to else 0)
+        logger.info(f"AlertManager initialized | project_id={self.project_id} dataset_id={self.dataset_id} email_from={self.email_from} recipients_count={len(self.email_to) if self.email_to else 0}")
 
     def _get_bq_manager(self) -> BigQueryClientManager:
         """Get or create BigQuery manager."""
@@ -161,7 +157,7 @@ class AlertManager:
         Raises:
             AlertError: If query fails
         """
-        logger.info("Querying high-risk institutions", area=area or "all")
+        logger.info(f"Querying high-risk institutions | area={area or 'all'}")
 
         try:
             bq_manager = self._get_bq_manager()
@@ -189,12 +185,10 @@ class AlertManager:
             df = bq_manager.query(query)
 
             if df.empty:
-                logger.info("No high-risk institutions found", area=area or "all")
+                logger.info(f"No high-risk institutions found | area={area or 'all'}")
                 return pd.DataFrame()
 
-            logger.info("High-risk institutions found",
-                        count=len(df),
-                        area=area or "all")
+            logger.info(f"High-risk institutions found | count={len(df)} area={area or 'all'}")
 
             return df
 
@@ -259,9 +253,7 @@ class AlertManager:
             'model_version': model_version,
         }
 
-        logger.info("Alert summary generated",
-                    total_high_risk=summary['total_high_risk'],
-                    areas_count=len(by_area))
+        logger.info(f"Alert summary generated | total_high_risk={summary['total_high_risk']} areas_count={len(by_area)}")
 
         return summary
 
@@ -511,7 +503,7 @@ class AlertManager:
 </html>
 """
 
-        logger.info("HTML email report generated", length=len(html))
+        logger.info(f"HTML email report generated | length={len(html)}")
         return html
 
     def send_email(self, to_emails: List[str], subject: str, html_content: str) -> Dict[str, Any]:
@@ -529,7 +521,7 @@ class AlertManager:
         Raises:
             EmailSendError: If SendGrid is not configured or send fails
         """
-        logger.info("Sending alert email", recipients_count=len(to_emails), subject=subject)
+        logger.info(f"Sending alert email | recipients_count={len(to_emails)} subject={subject}")
 
         if not self.sendgrid_api_key:
             error_msg = "SendGrid API key not configured"
@@ -565,11 +557,9 @@ class AlertManager:
             }
 
             if result['status'] == 'sent':
-                logger.info("Email sent successfully",
-                          status_code=response.status_code,
-                          message_id=result['message_id'])
+                logger.info(f"Email sent successfully | status_code={response.status_code} message_id={result['message_id']}")
             else:
-                logger.error("Email send failed", status_code=response.status_code)
+                logger.error(f"Email send failed | status_code={response.status_code}")
                 result['error'] = f"SendGrid returned status {response.status_code}"
 
             return result
@@ -638,9 +628,7 @@ class AlertManager:
                 schema=ALERT_LOG_SCHEMA,
             )
 
-            logger.info("Alert logged successfully",
-                       alert_id=alert_record['alert_id'],
-                       rows_loaded=stats.get('rows_loaded'))
+            logger.info(f"Alert logged successfully | alert_id={alert_record['alert_id']} rows_loaded={stats.get('rows_loaded')}")
 
         except BigQueryConnectionError as e:
             error_msg = f"BigQuery error logging alert: {str(e)}"
@@ -728,10 +716,7 @@ class AlertManager:
             result.alert_id = "logged"  # Actual ID is in BigQuery
             result.status = "success" if result.email_sent else "failed"
 
-            logger.info("Alert Pipeline completed",
-                       email_sent=result.email_sent,
-                       recipients_count=len(recipients),
-                       status=result.status)
+            logger.info(f"Alert Pipeline completed | email_sent={result.email_sent} recipients_count={len(recipients)} status={result.status}")
 
         except (AlertError, EmailSendError) as e:
             error_msg = f"Alert pipeline error: {str(e)}"

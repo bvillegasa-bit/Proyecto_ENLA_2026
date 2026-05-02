@@ -40,7 +40,7 @@ class BigQueryClientManager:
             raise BigQueryConnectionError(msg)
         
         self.client: Optional[bigquery.Client] = None
-        logger.info("BigQueryClientManager initialized", project_id=self.project_id)
+        logger.info(f"BigQueryClientManager initialized | project_id={self.project_id}")
     
     def connect(self) -> bigquery.Client:
         """
@@ -61,7 +61,7 @@ class BigQueryClientManager:
                     self.credentials_path
                 )
                 client_kwargs["credentials"] = credentials
-                logger.info("Using service account credentials", path=self.credentials_path)
+                logger.info(f"Using service account credentials | path={self.credentials_path}")
             
             self.client = bigquery.Client(**client_kwargs)
             
@@ -120,7 +120,7 @@ class BigQueryClientManager:
         
         try:
             dataset = self.client.create_dataset(dataset_ref, exists_ok=exists_ok)
-            logger.info("Dataset created/verified", dataset_id=full_dataset_id)
+            logger.info(f"Dataset created/verified | dataset_id={full_dataset_id}")
             return dataset
         except GoogleAPIError as e:
             msg = f"Failed to create dataset {full_dataset_id}: {str(e)}"
@@ -153,8 +153,7 @@ class BigQueryClientManager:
         
         try:
             table = self.client.create_table(table_ref, exists_ok=exists_ok)
-            logger.info("Table created/verified", table_id=full_table_id,
-                       schema_fields=len(schema))
+            logger.info(f"Table created/verified | table_id={full_table_id} schema_fields={len(schema)}")
             return table
         except GoogleAPIError as e:
             msg = f"Failed to create table {full_table_id}: {str(e)}"
@@ -194,10 +193,7 @@ class BigQueryClientManager:
             job_config.schema = schema
         
         try:
-            logger.info("Loading DataFrame to BigQuery",
-                       table_id=full_table_id,
-                       rows=len(dataframe),
-                       write_disposition=write_disposition)
+            logger.info(f"Loading DataFrame to BigQuery | table_id={full_table_id} rows={len(dataframe)} write_disposition={write_disposition}")
             
             job = self.client.load_table_from_dataframe(
                 dataframe, full_table_id, job_config=job_config
@@ -211,7 +207,7 @@ class BigQueryClientManager:
                 'destination_table': job.destination.table_id,
             }
             
-            logger.info("DataFrame loaded successfully", **stats)
+            logger.info(f"DataFrame loaded successfully | rows_loaded={stats.get('rows_loaded')} table_id={stats.get('table_id')} job_id={stats.get('job_id')}")
             return stats
             
         except GoogleAPIError as e:
@@ -248,15 +244,13 @@ class BigQueryClientManager:
             result = query_job.result()
             
             df = result.to_dataframe()
-            logger.info("Query executed successfully",
-                       rows_returned=len(df),
-                       bytes_processed=query_job.total_bytes_processed)
+            logger.info(f"Query executed successfully | rows_returned={len(df)} bytes_processed={query_job.total_bytes_processed}")
             
             return df
             
         except GoogleAPIError as e:
             msg = f"Query execution failed: {str(e)}"
-            logger.error(msg, query=query_sql)
+            logger.error(f"{msg} | query={query_sql}")
             raise BigQueryConnectionError(msg)
     
     @staticmethod

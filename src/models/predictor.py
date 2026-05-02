@@ -90,11 +90,7 @@ class ENLAPredictor:
         self.dataset_id = dataset_id or settings.GCP_DATASET_ID
         self.model_version = model_version
 
-        logger.info("ENLAPredictor initialized",
-                    project_id=self.project_id,
-                    dataset_id=self.dataset_id,
-                    model_version=self.model_version,
-                    risk_thresholds=self.RISK_THRESHOLDS)
+        logger.info(f"ENLAPredictor initialized | project_id={self.project_id} dataset_id={self.dataset_id} model_version={self.model_version} risk_thresholds={self.RISK_THRESHOLDS}")
 
     def _get_bq_manager(self) -> BigQueryClientManager:
         """Get or create BigQuery manager."""
@@ -132,7 +128,7 @@ class ENLAPredictor:
         )
         """
 
-        logger.info("Prediction query built", area=area, model_name=model_name)
+        logger.info(f"Prediction query built | area={area} model_name={model_name}")
         return query
 
     def predict_for_area(self, area: str) -> pd.DataFrame:
@@ -175,8 +171,7 @@ class ENLAPredictor:
             if prob_col in predictions_df.columns:
                 predictions_df['confidence'] = predictions_df[prob_col].astype(float)
 
-            logger.info(f"Predictions generated for '{area}'",
-                        count=len(predictions_df))
+            logger.info(f"Predictions generated for '{area}' | count={len(predictions_df)}")
 
             return predictions_df
 
@@ -235,9 +230,7 @@ class ENLAPredictor:
                 logger.error(error_msg, exc_info=True)
                 results[area] = pd.DataFrame()
 
-        logger.info("All area predictions generated",
-                    areas_with_data=sum(1 for df in results.values() if not df.empty),
-                    errors=len(errors))
+        logger.info(f"All area predictions generated | areas_with_data={sum(1 for df in results.values() if not df.empty)} errors={len(errors)}")
 
         return results
 
@@ -309,7 +302,7 @@ class ENLAPredictor:
 
             predictions_df = pd.DataFrame(all_records)
 
-            logger.info("Loading predictions to BigQuery", rows=len(predictions_df))
+            logger.info(f"Loading predictions to BigQuery | rows={len(predictions_df)}")
 
             stats = bq_manager.load_table_from_dataframe(
                 self.dataset_id,
@@ -319,7 +312,7 @@ class ENLAPredictor:
                 schema=PREDICTIONS_SCHEMA,
             )
 
-            logger.info("Predictions saved successfully", rows_saved=stats.get('rows_loaded'))
+            logger.info(f"Predictions saved successfully | rows_saved={stats.get('rows_loaded')}")
 
             return {
                 'rows_saved': stats.get('rows_loaded', len(all_records)),
@@ -402,9 +395,7 @@ class ENLAPredictor:
                 }
                 summary['areas'].append(area_info)
 
-            logger.info("Predictions summary retrieved",
-                        total_predictions=overall_total,
-                        risk_distribution=summary['risk_distribution'])
+            logger.info(f"Predictions summary retrieved | total_predictions={overall_total} risk_distribution={summary['risk_distribution']}")
 
             return summary
 
@@ -500,11 +491,7 @@ class ENLAPredictor:
             else:
                 result.status = "partial"
 
-            logger.info("Prediction Pipeline completed",
-                        areas_processed=result.areas_processed,
-                        total_predictions=result.total_predictions,
-                        risk_distribution=result.risk_distribution,
-                        status=result.status)
+            logger.info(f"Prediction Pipeline completed | areas_processed={result.areas_processed} total_predictions={result.total_predictions} risk_distribution={result.risk_distribution} status={result.status}")
 
         except PredictionError as e:
             error_msg = f"Prediction pipeline error: {str(e)}"

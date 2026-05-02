@@ -84,7 +84,7 @@ def run_full_pipeline(gcs_file_path: Optional[str] = None,
                 'records_ingested': ingestion_result.get('records_ingested', 0),
                 'message': 'Ingestion completed successfully'
             }
-            logger.info("Phase 1: Ingestion completed", **results['phases']['ingestion'])
+            logger.info(f"Phase 1: Ingestion completed - Status: {results['phases']['ingestion']['status']}, Records: {results['phases']['ingestion']['records_ingested']}")
 
         except Exception as e:
             error_msg = f"Ingestion failed: {str(e)}"
@@ -105,7 +105,7 @@ def run_full_pipeline(gcs_file_path: Optional[str] = None,
                 'rows_loaded': etl_result.get('total_rows_loaded', 0),
                 'message': 'ETL completed successfully'
             }
-            logger.info("Phase 2: ETL completed", **results['phases']['etl'])
+            logger.info(f"Phase 2: ETL completed - Status: {results['phases']['etl']['status']}, Rows: {results['phases']['etl']['rows_loaded']}")
 
         except Exception as e:
             error_msg = f"ETL failed: {str(e)}"
@@ -126,7 +126,7 @@ def run_full_pipeline(gcs_file_path: Optional[str] = None,
                 'features_created': feature_result.get('total_features', 0),
                 'message': 'Feature engineering completed successfully'
             }
-            logger.info("Phase 3: Feature Engineering completed", **results['phases']['features'])
+            logger.info(f"Phase 3: Feature Engineering completed - Status: {results['phases']['features']['status']}, Features: {results['phases']['features']['features_created']}")
 
         except Exception as e:
             error_msg = f"Feature engineering failed: {str(e)}"
@@ -157,7 +157,7 @@ def run_full_pipeline(gcs_file_path: Optional[str] = None,
                 'risk_distribution': prediction_result.risk_distribution,
                 'message': 'Model training and prediction completed'
             }
-            logger.info("Phase 4: Model & Prediction completed", **results['phases']['models'])
+            logger.info(f"Phase 4: Model & Prediction completed - Status: {results['phases']['models']['status']}")
 
         except Exception as e:
             error_msg = f"Model training/prediction failed: {str(e)}"
@@ -182,7 +182,7 @@ def run_full_pipeline(gcs_file_path: Optional[str] = None,
                 'recipients': alert_result.recipients,
                 'message': 'Alerting completed'
             }
-            logger.info("Phase 5: Alerting completed", **results['phases']['alerts'])
+            logger.info(f"Phase 5: Alerting completed - Status: {results['phases']['alerts']['status']}")
 
         except Exception as e:
             error_msg = f"Alerting failed: {str(e)}"
@@ -243,27 +243,28 @@ def enla_pipeline_orchestrator(cloud_event: functions_framework.CloudEvent) -> D
     Returns:
         Dict with execution summary
     """
-    logger.info("Cloud Function triggered", event_id=cloud_event.get('id'))
+    logger.info(f"Cloud Function triggered - Event ID: {cloud_event.get('id')}")
 
     # Parse event data
     gcs_file_path = None
     model_version = 'v1'
-
+    
     try:
-        if cloud_event.data:
+        # Handle both CloudEvent objects and plain dicts (for testing)
+        event_data = cloud_event.data if hasattr(cloud_event, 'data') else cloud_event.get('data', {})
+        
+        if event_data:
             # Decode Pub/Sub message if present
-            if 'message' in cloud_event.data:
-                message_data = cloud_event.data['message']
+            if 'message' in event_data:
+                message_data = event_data['message']
                 if 'data' in message_data:
                     decoded_data = base64.b64decode(message_data['data']).decode('utf-8')
                     event_payload = json.loads(decoded_data)
-
+                    
                     gcs_file_path = event_payload.get('gcs_file_path')
                     model_version = event_payload.get('model_version', 'v1')
-
-                    logger.info("Event payload parsed",
-                               gcs_file_path=gcs_file_path,
-                               model_version=model_version)
+                    
+                    logger.info(f"Event payload parsed - GCS path: {gcs_file_path}, Version: {model_version}")
 
     except Exception as e:
         logger.warning(f"Failed to parse event data: {str(e)}")

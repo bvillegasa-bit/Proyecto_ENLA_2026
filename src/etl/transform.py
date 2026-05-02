@@ -125,9 +125,7 @@ class ETLTransform:
         self.bq_manager = BigQueryClientManager(gcp_project_id, gcp_credentials_path)
         self.dataset_id = settings.GCP_DATASET_ID
         
-        logger.info("ETLTransform initialized",
-                    dataset_id=self.dataset_id,
-                    area_count=len(AREA_COLUMN_MAP))
+        logger.info(f"ETLTransform initialized | dataset_id={self.dataset_id} area_count={len(AREA_COLUMN_MAP)}")
     
     def run_full_pipeline(self) -> ETLResult:
         """
@@ -221,11 +219,7 @@ class ETLTransform:
                 execution_time_seconds=execution_time,
             )
             
-            logger.info("ETL Pipeline completed successfully",
-                        tables_loaded=len(tables_loaded),
-                        total_rows=total_rows,
-                        execution_time=f"{execution_time:.2f}s",
-                        data_quality_valid=quality_summary.is_valid)
+            logger.info(f"ETL Pipeline completed successfully | tables_loaded={len(tables_loaded)} total_rows={total_rows} execution_time={execution_time:.2f}s data_quality_valid={quality_summary.is_valid}")
             
             return result
             
@@ -299,9 +293,7 @@ class ETLTransform:
             
             df = pd.DataFrame(records)
             
-            logger.info("Extracted records from MongoDB",
-                       row_count=len(df),
-                       columns=list(df.columns))
+            logger.info(f"Extracted records from MongoDB | row_count={len(df)} columns={list(df.columns)}")
             
             return df
             
@@ -353,7 +345,7 @@ class ETLTransform:
                 'year': raw_df['ano_evaluacion'],
                 'area': area_name,
                 'score': scores,
-                'is_null_score': scores.isna(),
+                'is_null_score': [bool(v) for v in scores.isna()],
                 'created_at': datetime.now(timezone.utc),
             })
             
@@ -370,10 +362,7 @@ class ETLTransform:
         # Sort for consistency
         cleaned_df = cleaned_df.sort_values(['id_ie', 'year', 'area']).reset_index(drop=True)
         
-        logger.info("Wide-to-long transformation complete",
-                    input_rows=len(raw_df),
-                    output_rows=len(cleaned_df),
-                    areas_processed=len(all_records))
+        logger.info(f"Wide-to-long transformation complete | input_rows={len(raw_df)} output_rows={len(cleaned_df)} areas_processed={len(all_records)}")
         
         return cleaned_df
     
@@ -402,7 +391,7 @@ class ETLTransform:
             'created_at': cleaned_df['created_at'],
         })
         
-        logger.info("Fact records created", count=len(fact_df))
+        logger.info(f"Fact records created | count={len(fact_df)}")
         return fact_df
     
     # ==========================================
@@ -433,8 +422,7 @@ class ETLTransform:
             'created_at': datetime.now(timezone.utc),
         })
         
-        logger.info("dim_meta created", count=len(dim_meta_df),
-                    target_score=settings.TARGET_SCORE_THRESHOLD)
+        logger.info(f"dim_meta created | count={len(dim_meta_df)} target_score={settings.TARGET_SCORE_THRESHOLD}")
         
         return dim_meta_df
     
@@ -482,9 +470,7 @@ class ETLTransform:
         
         dim_cal_df = pd.DataFrame(all_dates)
         
-        logger.info("dim_calendario created",
-                    count=len(dim_cal_df),
-                    years_covered=list(years))
+        logger.info(f"dim_calendario created | count={len(dim_cal_df)} years_covered={list(years)}")
         
         return dim_cal_df
     
@@ -522,9 +508,7 @@ class ETLTransform:
             (null_scores / len(cleaned_df)) * 100, 2
         ) if len(cleaned_df) > 0 else 0.0
         
-        logger.info("Data quality: NULL score coverage",
-                    null_count=summary.null_scores_count,
-                    null_percent=summary.null_scores_percent)
+        logger.info(f"Data quality: NULL score coverage | null_count={summary.null_scores_count} null_percent={summary.null_scores_percent}")
         
         # Check 2: Score range validity (for non-NULL scores)
         valid_scores = cleaned_df[~cleaned_df['is_null_score']]['score']
@@ -565,10 +549,7 @@ class ETLTransform:
             logger.warning(msg)
         
         # Log summary
-        logger.info("Data quality validation complete",
-                    is_valid=summary.is_valid,
-                    warnings=len(summary.warnings),
-                    errors=len(summary.errors))
+        logger.info(f"Data quality validation complete | is_valid={summary.is_valid} warnings={len(summary.warnings)} errors={len(summary.errors)}")
         
         return summary
 

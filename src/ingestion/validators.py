@@ -89,10 +89,7 @@ class ENLAValidator:
             statistics=statistics
         )
         
-        logger.info("Validation completed", 
-                   is_valid=is_valid,
-                   error_count=len(errors),
-                   warning_count=len(warnings))
+        logger.info(f"Validation completed | is_valid={is_valid} error_count={len(errors)} warning_count={len(warnings)}")
         
         return self.report
     
@@ -115,7 +112,7 @@ class ENLAValidator:
                     pd.to_numeric(df[col], errors='raise')
                 except (ValueError, TypeError):
                     msg = f"Column '{col}' contains non-numeric values"
-                    logger.error(msg, column=col)
+                    logger.error(f"{msg} | column={col}")
                     errors.append(msg)
         return errors
     
@@ -132,7 +129,7 @@ class ENLAValidator:
                 if invalid.any():
                     invalid_count = invalid.sum()
                     msg = f"Column '{col}': {invalid_count} values out of range [0, 100]"
-                    logger.error(msg, column=col, count=invalid_count)
+                    logger.error(f"{msg} | column={col} count={invalid_count}")
                     errors.append(msg)
         return errors
     
@@ -146,7 +143,7 @@ class ENLAValidator:
                 null_count = df[col].isna().sum()
                 if null_count > 0:
                     msg = f"Column '{col}': {null_count} NULL values found"
-                    logger.warning(msg, column=col, count=null_count)
+                    logger.warning(f"{msg} | column={col} count={null_count}")
                     warnings.append(msg)
         return warnings
     
@@ -160,7 +157,7 @@ class ENLAValidator:
             if duplicates.any():
                 dup_count = duplicates.sum()
                 msg = f"Found {dup_count} duplicate rows (by id_ie + id_seccion + ano_evaluacion)"
-                logger.warning(msg, duplicate_count=dup_count)
+                logger.warning(f"{msg} | duplicate_count={dup_count}")
                 warnings.append(msg)
         return warnings
     

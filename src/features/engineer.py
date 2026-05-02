@@ -108,10 +108,7 @@ class FeatureEngineer:
         # Store normalization params per area for reproducibility
         self._norm_params_store: Dict[str, Dict[str, Tuple[float, float]]] = {}
 
-        logger.info("FeatureEngineer initialized",
-                    target_threshold=self.target_threshold,
-                    norm_range=(self.norm_min, self.norm_max),
-                    areas=AREAS)
+        logger.info(f"FeatureEngineer initialized | target_threshold={self.target_threshold} norm_range={(self.norm_min, self.norm_max)} areas={AREAS}")
 
     def _get_bq_manager(self) -> BigQueryClientManager:
         """Get or create BigQuery manager."""
@@ -139,7 +136,7 @@ class FeatureEngineer:
             DataFrame with columns: institution_id, nom_ie, avg_2021, avg_2022, avg_2023
             Each row is one institution, each year is a separate column.
         """
-        logger.info("Calculating yearly averages", area=area, input_rows=len(df))
+        logger.info(f"Calculating yearly averages | area={area} input_rows={len(df)}")
 
         # Filter to the target area and exclude NULL scores
         area_df = df[df['area'] == area].copy()
@@ -177,10 +174,7 @@ class FeatureEngineer:
         result = pivoted[['id_ie', 'nom_ie', 'avg_2021', 'avg_2022', 'avg_2023']].copy()
         result = result.rename(columns={'id_ie': 'institution_id'})
 
-        logger.info("Yearly averages calculated",
-                    area=area,
-                    institutions=len(result),
-                    years_with_data=[y for y in YEARS if f'avg_{y}' in result.columns])
+        logger.info(f"Yearly averages calculated | area={area} institutions={len(result)} years_with_data={[y for y in YEARS if f'avg_{y}' in result.columns]}")
 
         return result
 
@@ -213,7 +207,7 @@ class FeatureEngineer:
         )
 
         valid_trends = df['trend'].notna().sum()
-        logger.info("Trend calculation complete", valid_trends=valid_trends)
+        logger.info(f"Trend calculation complete | valid_trends={valid_trends}")
 
         return df
 
@@ -245,7 +239,7 @@ class FeatureEngineer:
             df['variance'] = np.nan
 
         valid_variance = df['variance'].notna().sum()
-        logger.info("Variance calculation complete", valid_variance=valid_variance)
+        logger.info(f"Variance calculation complete | valid_variance={valid_variance}")
 
         return df
 
@@ -269,7 +263,7 @@ class FeatureEngineer:
         cols = feature_cols or FEATURE_COLS
         norm_params = {}
 
-        logger.info("Computing normalization parameters", features=cols)
+        logger.info(f"Computing normalization parameters | features={cols}")
 
         for col in cols:
             if col not in df.columns:
@@ -361,7 +355,7 @@ class FeatureEngineer:
         """
         df = df.copy()
 
-        logger.info("Generating target labels", threshold=meta_threshold)
+        logger.info(f"Generating target labels | threshold={meta_threshold}")
 
         df['target'] = np.where(
             df['raw_avg_score_2023'].isna(),
@@ -371,10 +365,7 @@ class FeatureEngineer:
 
         success_count = int((df['target'] == 1).sum())
         failure_count = int((df['target'] == 0).sum())
-        logger.info("Target generation complete",
-                    success=success_count,
-                    failure=failure_count,
-                    null_target=int(df['target'].isna().sum()))
+        logger.info(f"Target generation complete | success={success_count} failure={failure_count} null_target={int(df['target'].isna().sum())}")
 
         return df
 
@@ -473,8 +464,7 @@ class FeatureEngineer:
         # Add area column
         avg_df['area'] = area
 
-        logger.info(f"Feature engineering complete for area '{area}'",
-                    institutions=len(avg_df))
+        logger.info(f"Feature engineering complete for area '{area}' | institutions={len(avg_df)}")
 
         return avg_df
 
@@ -504,9 +494,7 @@ class FeatureEngineer:
                 logger.error(error_msg, exc_info=True)
                 results[area] = pd.DataFrame()
 
-        logger.info("All areas processed",
-                    areas_with_data=sum(1 for df in results.values() if not df.empty),
-                    errors=len(errors))
+        logger.info(f"All areas processed | areas_with_data={sum(1 for df in results.values() if not df.empty)} errors={len(errors)}")
 
         return results
 
@@ -637,7 +625,7 @@ class FeatureEngineer:
                 combined_df, write_disposition='WRITE_TRUNCATE',
                 schema=FEATURES_SCHEMA
             )
-            logger.info("Features table loaded", rows=feature_stats.get('rows_loaded'))
+            logger.info(f"Features table loaded | rows={feature_stats.get('rows_loaded')}")
 
             # Load normalization params table
             if all_norm_records:
@@ -649,14 +637,11 @@ class FeatureEngineer:
                     schema=NORM_PARAMS_SCHEMA
                 )
                 result.normalization_params_loaded = len(all_norm_records)
-                logger.info("Normalization params loaded", rows=norm_stats.get('rows_loaded'))
+                logger.info(f"Normalization params loaded | rows={norm_stats.get('rows_loaded')}")
 
             result.status = "success"
 
-            logger.info("Feature Engineering Pipeline completed successfully",
-                        areas_processed=result.areas_processed,
-                        total_features=result.total_features,
-                        norm_params_loaded=result.normalization_params_loaded)
+            logger.info(f"Feature Engineering Pipeline completed successfully | areas_processed={result.areas_processed} total_features={result.total_features} norm_params_loaded={result.normalization_params_loaded}")
 
         except BigQueryConnectionError as e:
             error_msg = f"BigQuery connection error: {str(e)}"

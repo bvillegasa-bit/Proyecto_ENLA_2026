@@ -5,7 +5,7 @@ from pathlib import Path
 from typing import Dict, List, Optional, Any
 from datetime import datetime
 import uuid
-from pymongo.errors import MongoError, DuplicateKeyError
+from pymongo.errors import PyMongoError, DuplicateKeyError
 
 from src.logging.setup import get_logger
 from src.ingestion.validators import ENLAValidator, ValidationReport
@@ -71,10 +71,7 @@ class ENLAIngestor:
         self.ingestion_id = str(uuid.uuid4())
         self.validator = ENLAValidator()
         
-        logger.info("ENLAIngestor initialized",
-                   db_name=db_name,
-                   collection_raw=collection_raw,
-                   ingestion_id=self.ingestion_id)
+        logger.info(f"ENLAIngestor initialized | db_name={db_name} collection_raw={collection_raw} ingestion_id={self.ingestion_id}")
     
     def _connect(self):
         """Connect to MongoDB."""
@@ -85,7 +82,7 @@ class ENLAIngestor:
             self.log_collection = self.db[self.collection_log]
             logger.info("MongoDB connection successful")
         except MongoConnectionError as e:
-            logger.error("Failed to connect to MongoDB", error=str(e))
+            logger.error(f"Failed to connect to MongoDB | error={str(e)}")
             raise IngestionError(f"MongoDB connection failed: {e}")
     
     def _disconnect(self):
@@ -119,19 +116,12 @@ class ENLAIngestor:
         try:
             # Try primary encoding
             df = pd.read_excel(path, encoding=encoding)
-            logger.info("Excel file read successfully",
-                       file_path=str(path),
-                       rows=len(df),
-                       encoding=encoding)
+            logger.info(f"Excel file read successfully | file_path={str(path)} rows={len(df)} encoding={encoding}")
         except (UnicodeDecodeError, Exception) as e:
-            logger.warning("Primary encoding failed, trying utf-8",
-                          file_path=str(path),
-                          error=str(e))
+            logger.warning(f"Primary encoding failed, trying utf-8 | file_path={str(path)} error={str(e)}")
             try:
                 df = pd.read_excel(path, encoding='utf-8')
-                logger.info("Excel file read with utf-8",
-                           file_path=str(path),
-                           rows=len(df))
+                logger.info(f"Excel file read with utf-8 | file_path={str(path)} rows={len(df)}")
             except Exception as e2:
                 msg = f"Cannot read Excel file: {str(e2)}"
                 logger.error(msg)
@@ -176,11 +166,7 @@ class ENLAIngestor:
         
         filtered_size = len(df)
         
-        logger.info("Data filtered",
-                   original_rows=original_size,
-                   filtered_rows=filtered_size,
-                   region=region,
-                   grado=grado)
+        logger.info(f"Data filtered | original_rows={original_size} filtered_rows={filtered_size} region={region} grado={grado}")
         
         return df
     
@@ -196,10 +182,7 @@ class ENLAIngestor:
         """
         report = self.validator.validate(df)
         
-        logger.info("Validation completed",
-                   is_valid=report.is_valid,
-                   error_count=len(report.errors),
-                   warning_count=len(report.warnings))
+        logger.info(f"Validation completed | is_valid={report.is_valid} error_count={len(report.errors)} warning_count={len(report.warnings)}")
         
         return report
     
@@ -218,10 +201,7 @@ class ENLAIngestor:
         deduplicated_size = len(df)
         duplicates_removed = original_size - deduplicated_size
         
-        logger.info("Deduplication completed",
-                   original_rows=original_size,
-                   deduplicated_rows=deduplicated_size,
-                   duplicates_removed=duplicates_removed)
+        logger.info(f"Deduplication completed | original_rows={original_size} deduplicated_rows={deduplicated_size} duplicates_removed={duplicates_removed}")
         
         return df
     
@@ -261,18 +241,13 @@ class ENLAIngestor:
                 elif result.modified_count > 0:
                     counts['updated'] += 1
                 
-            except MongoError as e:
+            except PyMongoError as e:
                 counts['failed'] += 1
                 error_msg = f"Row {idx}: {str(e)}"
                 counts['errors'].append(error_msg)
-                logger.warning("Failed to upsert row",
-                             row_index=idx,
-                             error=str(e))
+                logger.warning(f"Failed to upsert row | row_index={idx} error={str(e)}")
         
-        logger.info("UPSERT completed",
-                   inserted=counts['inserted'],
-                   updated=counts['updated'],
-                   failed=counts['failed'])
+        logger.info(f"UPSERT completed | inserted={counts['inserted']} updated={counts['updated']} failed={counts['failed']}")
         
         return counts
     
@@ -302,9 +277,8 @@ class ENLAIngestor:
         
         try:
             self.log_collection.insert_one(log_entry)
-            logger.info("Ingestion logged to MongoDB audit trail",
-                       ingestion_id=self.ingestion_id)
-        except MongoError as e:
+            logger.info(f"Ingestion logged to MongoDB audit trail | ingestion_id={self.ingestion_id}")
+        except PyMongoError as e:
             logger.error("Failed to log ingestion to MongoDB",
                         error=str(e))
     
@@ -338,7 +312,7 @@ class ENLAIngestor:
         
         try:
             # Step 1: Read Excel
-            logger.info("Starting ingestion pipeline", file_path=file_path)
+            logger.info(f"Starting ingestion pipeline | file_path={file_path}")
             df = self.read_excel(file_path)
             summary['rows_read'] = len(df)
             
@@ -382,16 +356,12 @@ class ENLAIngestor:
                 summary['errors'].append(error)
             
             summary['status'] = 'success'
-            logger.info("Ingestion completed successfully",
-                       ingestion_id=self.ingestion_id,
-                       status='success')
+            logger.info(f"Ingestion completed successfully | ingestion_id={self.ingestion_id} status='success'")
             
         except Exception as e:
             summary['status'] = 'failed'
             summary['errors'].append(str(e))
-            logger.error("Ingestion failed",
-                        ingestion_id=self.ingestion_id,
-                        error=str(e))
+            logger.error(f"Ingestion failed | ingestion_id={self.ingestion_id} error={str(e)}")
         
         finally:
             # Step 6: Log audit trail

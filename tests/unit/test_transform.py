@@ -243,12 +243,12 @@ class TestNullHandling:
         """Verify that rows with NULL scores are NOT filtered out."""
         result = mock_etl_transform._transform_to_long_format(sample_raw_df)
         
-        # IE002 has NULL ccss, should still be in output
-        ie002_ccss = result[
-            (result['id_ie'] == 'IE002') & (result['area'] == 'ccss')
+        # IE001 has NULL ccss, should still be in output
+        ie001_ccss = result[
+            (result['id_ie'] == 'IE001') & (result['area'] == 'ccss')
         ]
-        assert len(ie002_ccss) == 1
-        assert ie002_ccss.iloc[0]['is_null_score'] == True
+        assert len(ie001_ccss) == 1
+        assert ie001_ccss.iloc[0]['is_null_score'] == True
     
     def test_null_score_count_accuracy(self, mock_etl_transform: ETLTransform,
                                        sample_raw_df: pd.DataFrame):
