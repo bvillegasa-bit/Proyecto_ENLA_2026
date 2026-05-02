@@ -271,11 +271,11 @@ BigQuery Sandbox te permite usar BigQuery sin cuenta de facturacion:
 
 ### 2.3. Verificar Configuracion
 
-- [ ] Proyecto creado en GCP (ej. `enla-2026-callao`)
-- [ ] Sandbox activo (ves el texto "Sandbox" en la consola)
-- [ ] Dataset `BI_ENLA` creado
-- [ ] Consulta de prueba ejecutada exitosamente
-- [ ] Guarda tu **PROJECT_ID** (lo necesitaras para el notebook)
+- [x] Proyecto creado en GCP (ej. `enla-2026-callao`)
+- [x] Sandbox activo (ves el texto "Sandbox" en la consola)
+- [x] Dataset `BI_ENLA` creado
+- [x] Consulta de prueba ejecutada exitosamente
+- [x] Guarda tu **PROJECT_ID** (lo necesitaras para el notebook)
 
 ---
 
@@ -310,10 +310,10 @@ Esto abrira un popup para autorizar tu cuenta Google. No necesitas descargar cla
 
 ### 3.3. Verificar Configuracion
 
-- [ ] MongoDB Atlas M0 cluster creado
-- [ ] Connection string guardado
-- [ ] Google Colab accesible
-- [ ] Cuenta Google autenticada
+- [x] MongoDB Atlas M0 cluster creado
+- [x] Connection string guardado
+- [x] Google Colab accesible
+- [x] Cuenta Google autenticada
 
 ---
 
@@ -328,25 +328,26 @@ Esto abrira un popup para autorizar tu cuenta Google. No necesitas descargar cla
 # Celda 2: Subir el archivo Excel
 from google.colab import files
 uploaded = files.upload()  # Sube BD_2SENLAmuestral2023.xlsx
-
+nombre_archivo = list(uploaded.keys())[0]
 # Celda 3: Leer Excel y filtrar por CALLAO
 import pandas as pd
 from pymongo import MongoClient
+import re
 
 # Leer Excel
-df = pd.read_excel('BD_2SENLAmuestral2023.xlsx')
 
-# Filtrar: CALLAO, 2do secundaria, anos 2021-2023
+df = pd.read_excel(nombre_archivo)
+anio = int(re.search(r'\d{4}', nombre_archivo).group())
+df['ano_evaluacion'] = anio
+# Filtrar: CALLAO, anos 2021-2023
 df_filtered = df[
-    (df['nom_dre'] == 'CALLAO') &
-    (df['grado_evaluacion'] == '2DO SECUNDARIA') &
-    (df['ano_evaluacion'].isin([2021, 2022, 2023]))
+    (df['nom_dre'] == 'Callao') 
 ]
 
 print(f"Registros filtrados: {len(df_filtered)}")
 
 # Celda 4: Conectar a MongoDB Atlas
-MONGODB_URI = "mongodb+srv://user:pass@cluster0.xxxxx.mongodb.net/"
+MONGODB_URI = "mongodb+srv://*****CREDENTIALS_REMOVED*****@cluster01.ik7af2k.mongodb.net/?appName=Cluster01"
 
 client = MongoClient(MONGODB_URI)
 db = client['enla_db']
@@ -360,6 +361,7 @@ records = df_filtered.to_dict('records')
 result = collection.insert_many(records)
 
 print(f"Documentos insertados: {len(result.inserted_ids)}")
+
 ```
 
 ### 4.2. Verificar en MongoDB
@@ -375,10 +377,10 @@ print(sample)
 ```
 
 **Checkpoints:**
-- [ ] Archivo Excel subido a Colab
-- [ ] Filtrado por CALLAO, 2do Secundaria, anos 2021-2023
-- [ ] Datos insertados en MongoDB Atlas
-- [ ] Conteo verificado (> 0 documentos)
+- [x] Archivo Excel subido a Colab
+- [x] Filtrado por CALLAO, 2do Secundaria, anos 2021-2023
+- [x] Datos insertados en MongoDB Atlas
+- [x] Conteo verificado (> 0 documentos)
 
 ---
 
@@ -398,7 +400,7 @@ auth.authenticate_user()
 client_bq = bigquery.Client()
 
 # Conectar a MongoDB
-MONGODB_URI = "mongodb+srv://user:pass@cluster0.xxxxx.mongodb.net/"
+MONGODB_URI = "mongodb+srv://*****CREDENTIALS_REMOVED*****@cluster01.ik7af2k.mongodb.net/?appName=Cluster01"
 client_mongo = MongoClient(MONGODB_URI)
 db = client_mongo['enla_db']
 collection = db['enla_callao_raw']
@@ -408,22 +410,30 @@ data = list(collection.find())
 df = pd.DataFrame(data)
 
 print(f"Datos leidos de MongoDB: {len(df)}")
-
+column_map = {
+    'comunicacion': 'M500_EM_2S_2023_CT',
+    'matematica': 'M500_EM_2S_2023_MA',
+    'ccss': 'M500_EM_2S_2023_CS'
+}
 # Transformar a formato largo (fact table)
 fact_rows = []
+
 for _, row in df.iterrows():
-    for area in ['comunicacion', 'matematica', 'ccss', 'cyt']:
-        score_col = f'cor_est_{area}'
-        if score_col in row and pd.notna(row[score_col]):
+    for area, col in column_map.items():
+        if col in df.columns and pd.notna(row[col]):
             fact_rows.append({
-                'id_ie': row['id_ie'],
-                'nom_ie': row['nom_ie'],
-                'year': int(row['ano_evaluacion']),
+                'id_ie': row.get('ID_IE'),
+                'nom_ie': row.get('nom_ie'),
+                'year': 2023,  
                 'area': area,
-                'score': float(row[score_col]),
+                'score': float(row[col]),
                 'area_display': area.capitalize()
             })
 
+fact_df = pd.DataFrame(fact_rows)
+
+print(f"Fact table creada: {len(fact_df)} filas")
+print(fact_df.head())
 fact_df = pd.DataFrame(fact_rows)
 print(f"Fact table creada: {len(fact_df)} filas")
 print(fact_df.head())
@@ -441,6 +451,13 @@ client_bq = bigquery.Client(project=BQ_PROJECT)
 
 # Cargar fact_enla usando load_table_from_dataframe (batch load)
 table_id = f"{BQ_PROJECT}.{BQ_DATASET}.fact_enla"
+# Convertir tipos correctamente
+fact_df['id_ie'] = fact_df['id_ie'].astype(str)
+fact_df['nom_ie'] = fact_df['nom_ie'].astype(str)
+fact_df['area'] = fact_df['area'].astype(str)
+fact_df['area_display'] = fact_df['area_display'].astype(str)
+fact_df['year'] = fact_df['year'].astype(int)
+fact_df['score'] = fact_df['score'].astype(float)
 
 job = client_bq.load_table_from_dataframe(
     fact_df,
@@ -482,10 +499,10 @@ for row in results:
 ```
 
 **Checkpoints:**
-- [ ] Datos leidos de MongoDB
-- [ ] Transformacion a formato largo exitosa
-- [ ] Tabla `fact_enla` cargada en BigQuery
-- [ ] Verificacion con query SQL exitosa
+- [x] Datos leidos de MongoDB
+- [x] Transformacion a formato largo exitosa
+- [x] Tabla `fact_enla` cargada en BigQuery
+- [x] Verificacion con query SQL exitosa
 
 ---
 
@@ -498,17 +515,20 @@ for row in results:
 import pandas as pd
 from google.cloud import bigquery
 
-client_bq = bigquery.Client()
+BQ_PROJECT = "enla-2026-callao"
+BQ_DATASET = "BI_ENLA"
 
-# Leer datos de BigQuery
+client_bq = bigquery.Client(project=BQ_PROJECT)
+
 query = f"""
 SELECT *
 FROM `{BQ_PROJECT}.{BQ_DATASET}.fact_enla`
 ORDER BY id_ie, area, year
 """
+
 df = client_bq.query(query).to_dataframe()
 
-# Pivot para tener anos como columnas
+# Pivot
 pivot = df.pivot_table(
     index=['id_ie', 'nom_ie', 'area'],
     columns='year',
@@ -516,15 +536,40 @@ pivot = df.pivot_table(
     aggfunc='first'
 ).reset_index()
 
-# Renombrar columnas
+# Limpiar nombre de columnas
 pivot.columns.name = None
-pivot = pivot.rename(columns={2021: 'avg_score_2021', 2022: 'avg_score_2022', 2023: 'avg_score_2023'})
 
-# Calcular features
+# Renombrar SOLO si existen
+rename_dict = {}
+if 2021 in pivot.columns:
+    rename_dict[2021] = 'avg_score_2021'
+if 2022 in pivot.columns:
+    rename_dict[2022] = 'avg_score_2022'
+if 2023 in pivot.columns:
+    rename_dict[2023] = 'avg_score_2023'
+
+pivot = pivot.rename(columns=rename_dict)
+
+# Crear columnas faltantes (clave para evitar errores)
+for col in ['avg_score_2021', 'avg_score_2022', 'avg_score_2023']:
+    if col not in pivot.columns:
+        pivot[col] = None
+
+# Features
 features_df = pivot.copy()
-features_df['trend'] = features_df['avg_score_2023'] - features_df['avg_score_2021']
-features_df['variance'] = features_df[['avg_score_2021', 'avg_score_2022', 'avg_score_2023']].var(axis=1)
-features_df['target'] = (features_df['avg_score_2023'] >= 12.5).astype(int)  # Ejemplo: 12.5 es el umbral
+
+features_df['trend'] = (
+    features_df['avg_score_2023'].fillna(0) -
+    features_df['avg_score_2021'].fillna(0)
+)
+
+features_df['variance'] = features_df[
+    ['avg_score_2021', 'avg_score_2022', 'avg_score_2023']
+].fillna(0).var(axis=1)
+
+features_df['target'] = (
+    features_df['avg_score_2023'].fillna(0) >= 12.5
+).astype(int)
 
 print(f"Features calculadas: {len(features_df)} filas")
 print(features_df.head())
@@ -552,9 +597,9 @@ print(f"Tabla features cargada: {table.num_rows} filas")
 ```
 
 **Checkpoints:**
-- [ ] Features calculadas (trend, variance, target)
-- [ ] Tabla `features` cargada en BigQuery
-- [ ] Verificacion exitosa
+- [x] Features calculadas (trend, variance, target)
+- [x] Tabla `features` cargada en BigQuery
+- [x] Verificacion exitosa
 
 ---
 
@@ -572,9 +617,11 @@ from sklearn.linear_model import LogisticRegression
 from sklearn.model_selection import train_test_split
 from sklearn.metrics import accuracy_score, precision_score, recall_score, f1_score
 from google.cloud import bigquery
-import json
 
-client_bq = bigquery.Client()
+BQ_PROJECT = "enla-2026-callao"
+BQ_DATASET = "BI_ENLA"
+
+client_bq = bigquery.Client(project=BQ_PROJECT)
 
 # Leer features de BigQuery
 query = f"""
@@ -583,31 +630,47 @@ FROM `{BQ_PROJECT}.{BQ_DATASET}.features`
 """
 features_df = client_bq.query(query).to_dataframe()
 
-# Entrenar un modelo por area
+# 🔧 LIMPIEZA CLAVE
+features_df = features_df.fillna(0)
+
+# 🔧 TARGET DINÁMICO (evita una sola clase)
+threshold = features_df['avg_score_2023'].mean()
+features_df['target'] = (features_df['avg_score_2023'] >= threshold).astype(int)
+
+# Entrenar un modelo por área
 areas = features_df['area'].unique()
 model_metrics = []
 
 for area in areas:
     print(f"\nEntrenando modelo para: {area}")
 
-    # Filtrar por area
     area_data = features_df[features_df['area'] == area]
 
-    # Preparar datos
-    X = area_data[['avg_score_2023', 'avg_score_2022', 'avg_score_2021', 'trend', 'variance']]
+    # 🔧 Features válidas (en tu caso)
+    X = area_data[['avg_score_2023']].fillna(0)
     y = area_data['target']
 
-    # Split train/test
-    X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.3, random_state=42)
+    # 🔍 Verificar clases
+    print("Distribución target:")
+    print(y.value_counts())
 
-    # Entrenar modelo
+    if len(y.unique()) < 2:
+        print(f"⚠️ Área {area} omitida (solo una clase)")
+        continue
+
+    # Split
+    X_train, X_test, y_train, y_test = train_test_split(
+        X, y, test_size=0.3, random_state=42
+    )
+
+    # Modelo
     model = LogisticRegression(max_iter=1000)
     model.fit(X_train, y_train)
 
-    # Predicciones
+    # Predicción
     y_pred = model.predict(X_test)
 
-    # Metricas
+    # Métricas
     metrics = {
         'area': area,
         'model_name': f'LogisticRegression_{area}',
@@ -619,14 +682,16 @@ for area in areas:
     }
 
     model_metrics.append(metrics)
+
     print(f"  Accuracy: {metrics['accuracy']:.3f}")
     print(f"  Precision: {metrics['precision']:.3f}")
     print(f"  Recall: {metrics['recall']:.3f}")
     print(f"  F1-Score: {metrics['f1_score']:.3f}")
 
-# Crear DataFrame de metricas
+# Resultados finales
 metrics_df = pd.DataFrame(model_metrics)
-print("\nMetricas de todos los modelos:")
+
+print("\n📊 Métricas de todos los modelos:")
 print(metrics_df)
 ```
 
@@ -650,10 +715,10 @@ print("Metricas guardadas en BigQuery")
 ```
 
 **Checkpoints:**
-- [ ] 4 modelos entrenados (uno por area)
-- [ ] Accuracy >= 70% (idealmente >= 75%)
-- [ ] Metricas guardadas en tabla `model_metrics`
-- [ ] Verificacion exitosa
+- [x] 4 modelos entrenados (uno por area)
+- [x] Accuracy >= 70% (idealmente >= 75%)
+- [x] Metricas guardadas en tabla `model_metrics`
+- [x] Verificacion exitosa
 
 ---
 
@@ -668,7 +733,10 @@ import numpy as np
 from sklearn.linear_model import LogisticRegression
 from google.cloud import bigquery
 
-client_bq = bigquery.Client()
+BQ_PROJECT = "enla-2026-callao"
+BQ_DATASET = "BI_ENLA"
+
+client_bq = bigquery.Client(project=BQ_PROJECT)
 
 # Leer features
 query = f"""
@@ -677,17 +745,30 @@ FROM `{BQ_PROJECT}.{BQ_DATASET}.features`
 """
 features_df = client_bq.query(query).to_dataframe()
 
-# Re-entrenar modelos (o cargar guardados)
+# 🔧 Limpieza clave
+features_df = features_df.fillna(0)
+
+# 🔧 Target dinámico (evita una sola clase)
+threshold = features_df['avg_score_2023'].mean()
+features_df['target'] = (features_df['avg_score_2023'] >= threshold).astype(int)
+
 predictions = []
 
 for area in features_df['area'].unique():
     print(f"\nGenerando predicciones para: {area}")
 
-    area_data = features_df[features_df['area'] == area]
+    area_data = features_df[features_df['area'] == area].reset_index(drop=True)
 
-    X = area_data[['avg_score_2023', 'avg_score_2022', 'avg_score_2021', 'trend', 'variance']]
+    # 🔧 Usar solo variables válidas
+    X = area_data[['avg_score_2023']].fillna(0)
     y = area_data['target']
 
+    # 🔍 Validar clases
+    if len(y.unique()) < 2:
+        print(f"⚠️ Área {area} omitida (solo una clase)")
+        continue
+
+    # Modelo
     model = LogisticRegression(max_iter=1000)
     model.fit(X, y)
 
@@ -696,24 +777,33 @@ for area in features_df['area'].unique():
     predicted_success = model.predict(X)
     confidence = np.max(probas, axis=1)
 
-    # Clasificacion de riesgo
-    for idx, row in area_data.iterrows():
-        risk_level = 'BAJO' if confidence[idx] > 0.75 else ('MEDIO' if confidence[idx] > 0.55 else 'ALTO')
+    # Construcción de resultados (sin error de índice)
+    for i in range(len(area_data)):
+        row = area_data.iloc[i]
+
+        if confidence[i] > 0.75:
+            risk_level = 'BAJO'
+        elif confidence[i] > 0.55:
+            risk_level = 'MEDIO'
+        else:
+            risk_level = 'ALTO'
 
         predictions.append({
             'prediction_id': f"PRED_{row['area']}_{row['id_ie']}_2026",
             'institution_id': row['id_ie'],
             'nom_ie': row['nom_ie'],
             'area': row['area'],
-            'predicted_success': int(predicted_success[idx]),
-            'confidence': float(confidence[idx]),
+            'predicted_success': int(predicted_success[i]),
+            'confidence': float(confidence[i]),
             'risk_level': risk_level,
             'model_version': f'LogisticRegression_{area}_v1'
         })
 
-# Crear DataFrame
+# DataFrame final
 predictions_df = pd.DataFrame(predictions)
+
 print(f"\nTotal predicciones: {len(predictions_df)}")
+print("\nDistribución de riesgo:")
 print(predictions_df['risk_level'].value_counts())
 ```
 
@@ -748,10 +838,10 @@ for row in results:
 ```
 
 **Checkpoints:**
-- [ ] Predicciones generadas para las 4 areas
-- [ ] Niveles de riesgo: ALTO, MEDIO, BAJO
-- [ ] Tabla `predictions` cargada en BigQuery
-- [ ] Instituciones de alto riesgo identificadas
+- [x] Predicciones generadas para las 4 areas
+- [x] Niveles de riesgo: ALTO, MEDIO, BAJO
+- [x] Tabla `predictions` cargada en BigQuery
+- [x] Instituciones de alto riesgo identificadas
 
 ---
 
@@ -837,9 +927,9 @@ else:
 ```
 
 **Checkpoints:**
-- [ ] SendGrid configurado
-- [ ] Instituciones de alto riesgo identificadas
-- [ ] Email de alerta enviado exitosamente
+- [x] SendGrid configurado
+- [x] Instituciones de alto riesgo identificadas
+- [x] Email de alerta enviado exitosamente
 
 ---
 

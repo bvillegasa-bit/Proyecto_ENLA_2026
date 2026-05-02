@@ -1,0 +1,37 @@
+name: Run ENLA 2026 Pipeline
+
+on:
+  schedule:
+    - cron: '0 3 * * *'  # Diario a las 03:00 UTC (10pm Peru)
+  workflow_dispatch:  # Permite ejecucion manual
+
+jobs:
+  run-pipeline:
+    runs-on: ubuntu-latest
+
+    steps:
+    - uses: actions/checkout@v3
+
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.9'
+
+    - name: Install dependencies
+      run: |
+        pip install pandas pymongo scikit-learn google-cloud-bigquery sendgrid
+
+    - name: Run pipeline script
+      env:
+        MONGODB_URI: ${{ secrets.MONGODB_URI }}
+        BQ_PROJECT: ${{ secrets.BQ_PROJECT }}
+        SENDGRID_API_KEY: ${{ secrets.SENDGRID_API_KEY }}
+        EMAIL_FROM: ${{ secrets.EMAIL_FROM }}
+        EMAIL_TO: ${{ secrets.EMAIL_TO }}
+      run: |
+        python scripts/run_pipeline.py
+
+    - name: Commit and push if changed
+      uses: stefanzweifel/git-auto-commit-action@v4
+      with:
+        commit_message: "Auto-update predictions"
