@@ -8,13 +8,14 @@ on:
 jobs:
   deploy:
     runs-on: ubuntu-latest
+    if: secrets.GCP_SA_KEY != ''
     permissions:
       contents: read
       id-token: write
     
     steps:
       - uses: actions/checkout@v4
-      
+       
       - name: Authenticate to Google Cloud
         uses: google-github-actions/auth@v2
         with:

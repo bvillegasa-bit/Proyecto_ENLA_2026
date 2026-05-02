@@ -12,18 +12,19 @@ permissions:
 jobs:
   terraform:
     runs-on: ubuntu-latest
+    if: secrets.GCP_SA_KEY != ''
     defaults:
       run:
         working-directory: terraform
     
     steps:
       - uses: actions/checkout@v4
-      
+       
       - name: Set up Terraform
         uses: hashicorp/setup-terraform@v3
         with:
           terraform_version: '1.6.0'
-      
+       
       - name: Authenticate to Google Cloud
         uses: google-github-actions/auth@v2
         with:

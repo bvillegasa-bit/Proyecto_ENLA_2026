@@ -19,18 +19,19 @@ on:
 jobs:
   trigger:
     runs-on: ubuntu-latest
+    if: secrets.GCP_SA_KEY != ''
     
     steps:
       - uses: actions/checkout@v4
-      
+       
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
           python-version: '3.11'
-      
+       
       - name: Install dependencies
         run: pip install -r requirements.txt
-      
+       
       - name: Authenticate to Google Cloud
         uses: google-github-actions/auth@v2
         with:
