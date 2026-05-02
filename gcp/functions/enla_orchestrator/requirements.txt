@@ -1,0 +1,12 @@
+google-cloud-bigquery==3.11.1
+google-cloud-storage==2.5.0
+google-cloud-pubsub==2.18.4
+pymongo==4.3.3
+pandas==1.5.3
+openpyxl==3.1.5
+sendgrid==6.10.0
+functions-framework==3.3.0
+pydantic==2.5.0
+pydantic-settings==2.1.0
+python-dotenv==0.21.0
+structlog==23.1.0

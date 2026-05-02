@@ -1,0 +1,80 @@
+# ==========================================
+# ENLA 2026 Callao - dbt Project Configuration
+# Sprint 6: dbt Transformations for Looker Studio
+# ==========================================
+
+name: 'enla_callao'
+version: '1.0.0'
+config-version: 2
+
+# Define the profile to use (matches profiles.yml)
+profile: 'enla_callao'
+
+# Project configuration
+model-paths: ["models"]
+seed-paths: ["seeds"]
+test-paths: ["tests"]
+analysis-paths: ["analyses"]
+macro-paths: ["macros"]
+snapshot-paths: ["snapshots"]
+
+# Target schema for dbt models
+models:
+  enla_callao:
+    # Default materialization for all models
+    +materialized: view
+
+    # Staging models (if any) - materialized as views
+    staging:
+      +materialized: view
+
+    # Mart models - materialized as tables for performance
+    marts:
+      +materialized: table
+
+    # Materialized views for Looker Studio dashboards
+    dashboards:
+      +materialized: view
+      +tags: ["dashboard", "looker-studio"]
+
+# Seed configuration
+seeds:
+  enla_callao:
+    +schema: enla_seeds
+
+# Variables
+vars:
+  dashboard_refresh_hour: 3  # 03:00 UTC daily refresh
+  project_name: "ENLA 2026 Callao"
+  environment: "{{ env_var('DBT_ENVIRONMENT', 'prod') }}"
+
+# Dispatch configuration for packages
+dispatch:
+  - macro_namespace: dbt
+    search_order: ['enla_callao', 'dbt']
+
+# Quoting configuration
+quoting:
+  database: true
+  schema: true
+  identifier: true
+
+# Require a specific dbt version
+require-dbt-version: ">=1.5.0"
+
+# Log path
+log-path: "logs"
+
+# Target path for compiled SQL
+target-path: "target"
+
+# Clean target directory on run
+clean-targets:
+  - "target"
+  - "dbt_packages"
+  - "logs"
+
+# Packages (uncomment if using dbt packages)
+# packages:
+#   - package: dbt-labs/dbt_utils
+#     version: [">=1.0.0", "<2.0.0"]

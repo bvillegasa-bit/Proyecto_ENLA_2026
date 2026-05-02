@@ -1,0 +1,599 @@
+"""ETL Transform module for Sprint 2: MongoDB → BigQuery pipeline.
+
+This module handles the transformation of raw ENLA data from MongoDB's wide format
+(one row per institution with all area scores) to BigQuery's long format
+(one row per institution per area), along with dimension table creation
+and data quality validation.
+"""
+
+import uuid
+from datetime import datetime, timezone
+from typing import List, Dict, Any, Tuple, Optional
+from dataclasses import dataclass, field
+
+import pandas as pd
+import numpy as np
+
+from src.logging.setup import get_logger
+from src.database.mongo_client import get_mongo_manager
+from src.database.bigquery_client import get_bq_manager, BigQueryClientManager
+from src.ingestion.config import settings
+from src.etl.schemas import (
+    FACT_ENLA_SCHEMA,
+    ENLA_CALLAO_CLEANED_SCHEMA,
+    DIM_META_SCHEMA,
+    DIM_CALENDARIO_SCHEMA,
+)
+
+logger = get_logger('etl_transform')
+
+
+# ==========================================
+# Custom Exceptions
+# ==========================================
+
+class ETLTransformError(Exception):
+    """Exception for ETL transformation errors."""
+    pass
+
+
+class DataQualityError(Exception):
+    """Exception for data quality gate failures."""
+    pass
+
+
+# ==========================================
+# Data Classes
+# ==========================================
+
+@dataclass
+class DataQualitySummary:
+    """Summary of data quality checks after transformation."""
+    total_input_rows: int = 0
+    total_output_rows: int = 0
+    areas_processed: int = 0
+    null_scores_count: int = 0
+    null_scores_percent: float = 0.0
+    score_range_valid: bool = True
+    critical_null_coverage: Dict[str, float] = field(default_factory=dict)
+    warnings: List[str] = field(default_factory=list)
+    errors: List[str] = field(default_factory=list)
+    
+    @property
+    def is_valid(self) -> bool:
+        """Check if data quality passes all gates."""
+        return len(self.errors) == 0
+
+
+@dataclass
+class ETLResult:
+    """Result of the complete ETL pipeline."""
+    success: bool
+    data_quality: DataQualitySummary
+    tables_loaded: List[str] = field(default_factory=list)
+    total_rows_loaded: int = 0
+    execution_time_seconds: float = 0.0
+    error_message: Optional[str] = None
+
+
+# ==========================================
+# Area Mapping Configuration
+# ==========================================
+
+AREA_COLUMN_MAP: Dict[str, str] = {
+    'cor_est_comunicacion': 'comunicacion',
+    'cor_est_matematica': 'matematica',
+    'cor_est_ccss': 'ccss',
+    'cor_est_cyt': 'cyt',
+}
+
+AREA_DISPLAY_NAMES: Dict[str, str] = {
+    'comunicacion': 'Comunicación',
+    'matematica': 'Matemática',
+    'ccss': 'Ciencias Sociales',
+    'cyt': 'Ciencia y Tecnología',
+}
+
+
+# ==========================================
+# ETL Transform Class
+# ==========================================
+
+class ETLTransform:
+    """Core ETL transformation engine for ENLA data.
+    
+    Transforms raw MongoDB data into BigQuery fact and dimension tables:
+    1. Extract: Query MongoDB enla_callao_raw collection
+    2. Transform: Pivot wide format → long format by area
+    3. Create dimensions: dim_meta, dim_calendario
+    4. Load: Insert to BigQuery tables
+    5. Validate: Data quality checks
+    """
+    
+    def __init__(self, mongodb_uri: Optional[str] = None,
+                 gcp_project_id: Optional[str] = None,
+                 gcp_credentials_path: Optional[str] = None):
+        """
+        Initialize ETL transform with database connections.
+        
+        Args:
+            mongodb_uri: MongoDB connection string (uses env if None)
+            gcp_project_id: GCP project ID (uses env if None)
+            gcp_credentials_path: Path to GCP credentials JSON (uses env if None)
+        """
+        self.mongo_manager = get_mongo_manager(mongodb_uri)
+        self.bq_manager = BigQueryClientManager(gcp_project_id, gcp_credentials_path)
+        self.dataset_id = settings.GCP_DATASET_ID
+        
+        logger.info("ETLTransform initialized",
+                    dataset_id=self.dataset_id,
+                    area_count=len(AREA_COLUMN_MAP))
+    
+    def run_full_pipeline(self) -> ETLResult:
+        """
+        Execute the complete ETL pipeline.
+        
+        Returns:
+            ETLResult with execution status, data quality summary, and metadata
+        """
+        start_time = datetime.now(timezone.utc)
+        tables_loaded = []
+        total_rows = 0
+        
+        try:
+            logger.info("=" * 60)
+            logger.info("Starting ETL Pipeline: MongoDB → BigQuery")
+            logger.info("=" * 60)
+            
+            # Step 1: Connect to MongoDB and extract data
+            logger.info("Step 1: Extracting data from MongoDB...")
+            raw_df = self._extract_from_mongodb()
+            logger.info(f"Extracted {len(raw_df)} rows from MongoDB")
+            
+            # Step 2: Transform wide → long format
+            logger.info("Step 2: Transforming data (wide → long format)...")
+            cleaned_df = self._transform_to_long_format(raw_df)
+            logger.info(f"Transformed to {len(cleaned_df)} rows (long format)")
+            
+            # Step 3: Create fact_enla records
+            logger.info("Step 3: Creating fact_enla records...")
+            fact_df = self._create_fact_records(cleaned_df)
+            logger.info(f"Created {len(fact_df)} fact records")
+            
+            # Step 4: Create dimension tables
+            logger.info("Step 4: Creating dimension tables...")
+            dim_meta_df = self._create_dim_meta(cleaned_df)
+            dim_calendario_df = self._create_dim_calendario(raw_df)
+            logger.info(f"Created dim_meta: {len(dim_meta_df)} rows, "
+                       f"dim_calendario: {len(dim_calendario_df)} rows")
+            
+            # Step 5: Connect to BigQuery
+            logger.info("Step 5: Connecting to BigQuery...")
+            self.bq_manager.connect()
+            self.bq_manager.create_dataset(self.dataset_id, location=settings.GCP_LOCATION)
+            
+            # Step 6: Load to BigQuery
+            logger.info("Step 6: Loading data to BigQuery...")
+            
+            self.bq_manager.load_table_from_dataframe(
+                self.dataset_id, 'enla_callao_cleaned',
+                cleaned_df, write_disposition='WRITE_TRUNCATE',
+                schema=ENLA_CALLAO_CLEANED_SCHEMA
+            )
+            tables_loaded.append('enla_callao_cleaned')
+            total_rows += len(cleaned_df)
+            
+            self.bq_manager.load_table_from_dataframe(
+                self.dataset_id, 'fact_enla',
+                fact_df, write_disposition='WRITE_TRUNCATE',
+                schema=FACT_ENLA_SCHEMA
+            )
+            tables_loaded.append('fact_enla')
+            total_rows += len(fact_df)
+            
+            self.bq_manager.load_table_from_dataframe(
+                self.dataset_id, 'dim_meta',
+                dim_meta_df, write_disposition='WRITE_TRUNCATE',
+                schema=DIM_META_SCHEMA
+            )
+            tables_loaded.append('dim_meta')
+            total_rows += len(dim_meta_df)
+            
+            self.bq_manager.load_table_from_dataframe(
+                self.dataset_id, 'dim_calendario',
+                dim_calendario_df, write_disposition='WRITE_TRUNCATE',
+                schema=DIM_CALENDARIO_SCHEMA
+            )
+            tables_loaded.append('dim_calendario')
+            total_rows += len(dim_calendario_df)
+            
+            # Step 7: Data quality validation
+            logger.info("Step 7: Running data quality checks...")
+            quality_summary = self._validate_data_quality(raw_df, cleaned_df)
+            
+            execution_time = (datetime.now(timezone.utc) - start_time).total_seconds()
+            
+            result = ETLResult(
+                success=quality_summary.is_valid,
+                data_quality=quality_summary,
+                tables_loaded=tables_loaded,
+                total_rows_loaded=total_rows,
+                execution_time_seconds=execution_time,
+            )
+            
+            logger.info("ETL Pipeline completed successfully",
+                        tables_loaded=len(tables_loaded),
+                        total_rows=total_rows,
+                        execution_time=f"{execution_time:.2f}s",
+                        data_quality_valid=quality_summary.is_valid)
+            
+            return result
+            
+        except ETLTransformError as e:
+            execution_time = (datetime.now(timezone.utc) - start_time).total_seconds()
+            error_msg = f"ETL transformation error: {str(e)}"
+            logger.error(error_msg)
+            
+            return ETLResult(
+                success=False,
+                data_quality=DataQualitySummary(),
+                tables_loaded=tables_loaded,
+                total_rows_loaded=total_rows,
+                execution_time_seconds=execution_time,
+                error_message=error_msg,
+            )
+        except Exception as e:
+            execution_time = (datetime.now(timezone.utc) - start_time).total_seconds()
+            error_msg = f"Unexpected ETL error: {str(e)}"
+            logger.error(error_msg, exc_info=True)
+            
+            return ETLResult(
+                success=False,
+                data_quality=DataQualitySummary(),
+                tables_loaded=tables_loaded,
+                total_rows_loaded=total_rows,
+                execution_time_seconds=execution_time,
+                error_message=error_msg,
+            )
+        finally:
+            # Clean up connections
+            try:
+                self.bq_manager.disconnect()
+                self.mongo_manager.disconnect()
+            except Exception as e:
+                logger.warning("Error during connection cleanup", error=str(e))
+    
+    # ==========================================
+    # Extract Phase
+    # ==========================================
+    
+    def _extract_from_mongodb(self) -> pd.DataFrame:
+        """
+        Extract all records from MongoDB enla_callao_raw collection.
+        
+        Returns:
+            DataFrame with raw ENLA data
+            
+        Raises:
+            ETLTransformError: If MongoDB connection or query fails
+        """
+        try:
+            collection = self.mongo_manager.get_collection(
+                settings.MONGODB_DB,
+                settings.MONGODB_COLLECTION_RAW
+            )
+            
+            # Query all documents, converting ObjectId to string
+            cursor = collection.find({})
+            
+            records = []
+            for doc in cursor:
+                # Convert ObjectId to string for JSON compatibility
+                doc['_id'] = str(doc['_id'])
+                records.append(doc)
+            
+            if not records:
+                msg = "No records found in MongoDB enla_callao_raw collection"
+                logger.warning(msg)
+                raise ETLTransformError(msg)
+            
+            df = pd.DataFrame(records)
+            
+            logger.info("Extracted records from MongoDB",
+                       row_count=len(df),
+                       columns=list(df.columns))
+            
+            return df
+            
+        except ETLTransformError:
+            raise
+        except Exception as e:
+            msg = f"Failed to extract data from MongoDB: {str(e)}"
+            logger.error(msg)
+            raise ETLTransformError(msg)
+    
+    # ==========================================
+    # Transform Phase
+    # ==========================================
+    
+    def _transform_to_long_format(self, raw_df: pd.DataFrame) -> pd.DataFrame:
+        """
+        Transform wide-format data to long format by area.
+        
+        Converts from:
+            id_ie | cor_est_comunicacion | cor_est_matematica | ...
+        To:
+            id_ie | area         | score
+            IE001 | comunicacion | 72.5
+            IE001 | matematica   | 65.3
+        
+        Args:
+            raw_df: Raw DataFrame from MongoDB
+            
+        Returns:
+            DataFrame in long format with columns:
+            id_ie, id_seccion, nom_ie, nom_dre, year, area, score, is_null_score, created_at
+        """
+        all_records = []
+        
+        for mongo_col, area_name in AREA_COLUMN_MAP.items():
+            if mongo_col not in raw_df.columns:
+                logger.warning(f"Column '{mongo_col}' not found in raw data, skipping area '{area_name}'")
+                continue
+            
+            # Extract score column and convert to numeric
+            scores = pd.to_numeric(raw_df[mongo_col], errors='coerce')
+            
+            # Create records for this area
+            area_df = pd.DataFrame({
+                'id_ie': raw_df['id_ie'],
+                'id_seccion': raw_df['id_seccion'],
+                'nom_ie': raw_df['nom_ie'],
+                'nom_dre': raw_df['nom_dre'],
+                'year': raw_df['ano_evaluacion'],
+                'area': area_name,
+                'score': scores,
+                'is_null_score': scores.isna(),
+                'created_at': datetime.now(timezone.utc),
+            })
+            
+            all_records.append(area_df)
+            logger.debug(f"Processed area '{area_name}': {len(area_df)} records")
+        
+        if not all_records:
+            msg = "No area columns found in raw data"
+            logger.error(msg)
+            raise ETLTransformError(msg)
+        
+        cleaned_df = pd.concat(all_records, ignore_index=True)
+        
+        # Sort for consistency
+        cleaned_df = cleaned_df.sort_values(['id_ie', 'year', 'area']).reset_index(drop=True)
+        
+        logger.info("Wide-to-long transformation complete",
+                    input_rows=len(raw_df),
+                    output_rows=len(cleaned_df),
+                    areas_processed=len(all_records))
+        
+        return cleaned_df
+    
+    # ==========================================
+    # Fact Table Creation
+    # ==========================================
+    
+    def _create_fact_records(self, cleaned_df: pd.DataFrame) -> pd.DataFrame:
+        """
+        Create fact_enla table records with UUID primary keys.
+        
+        Args:
+            cleaned_df: Cleaned long-format DataFrame
+            
+        Returns:
+            DataFrame with fact_enla schema
+        """
+        fact_df = pd.DataFrame({
+            'fact_id': [str(uuid.uuid4()) for _ in range(len(cleaned_df))],
+            'id_ie': cleaned_df['id_ie'],
+            'id_seccion': cleaned_df['id_seccion'],
+            'nom_ie': cleaned_df['nom_ie'],
+            'year': cleaned_df['year'].astype(int),
+            'area': cleaned_df['area'],
+            'score': cleaned_df['score'],
+            'created_at': cleaned_df['created_at'],
+        })
+        
+        logger.info("Fact records created", count=len(fact_df))
+        return fact_df
+    
+    # ==========================================
+    # Dimension Table Creation
+    # ==========================================
+    
+    def _create_dim_meta(self, cleaned_df: pd.DataFrame) -> pd.DataFrame:
+        """
+        Create dim_meta table with institution targets per area per year.
+        
+        Args:
+            cleaned_df: Cleaned long-format DataFrame
+            
+        Returns:
+            DataFrame with dim_meta schema
+        """
+        # Get unique institution-area-year combinations
+        unique_combos = cleaned_df[['id_ie', 'nom_ie', 'year', 'area']].drop_duplicates()
+        
+        dim_meta_df = pd.DataFrame({
+            'meta_id': [str(uuid.uuid4()) for _ in range(len(unique_combos))],
+            'id_ie': unique_combos['id_ie'],
+            'nom_ie': unique_combos['nom_ie'],
+            'year': unique_combos['year'].astype(int),
+            'area': unique_combos['area'],
+            'target_score': settings.TARGET_SCORE_THRESHOLD,
+            'region': settings.ENLA_REGION,
+            'created_at': datetime.now(timezone.utc),
+        })
+        
+        logger.info("dim_meta created", count=len(dim_meta_df),
+                    target_score=settings.TARGET_SCORE_THRESHOLD)
+        
+        return dim_meta_df
+    
+    def _create_dim_calendario(self, raw_df: pd.DataFrame) -> pd.DataFrame:
+        """
+        Create dim_calendario table with date dimension for analysis.
+        
+        Generates calendar entries for all evaluation years found in the data.
+        
+        Args:
+            raw_df: Raw DataFrame from MongoDB
+            
+        Returns:
+            DataFrame with dim_calendario schema
+        """
+        # Get unique years from data
+        years = sorted(raw_df['ano_evaluacion'].dropna().unique())
+        
+        all_dates = []
+        for year in years:
+            year_int = int(year)
+            # Create entries for key dates in each year (quarter starts + evaluation dates)
+            key_dates = [
+                (year_int, 1, 1),   # Q1 start
+                (year_int, 4, 1),   # Q2 start
+                (year_int, 7, 1),   # Q3 start
+                (year_int, 10, 1),  # Q4 start
+                (year_int, 12, 31), # Year end
+            ]
+            
+            for y, m, d in key_dates:
+                try:
+                    date_obj = datetime(y, m, d, tzinfo=timezone.utc)
+                    all_dates.append({
+                        'date_id': f"{y}{m:02d}{d:02d}",
+                        'date': date_obj,
+                        'year': y,
+                        'month': m,
+                        'day': d,
+                        'quarter': (m - 1) // 3 + 1,
+                        'created_at': datetime.now(timezone.utc),
+                    })
+                except ValueError:
+                    continue
+        
+        dim_cal_df = pd.DataFrame(all_dates)
+        
+        logger.info("dim_calendario created",
+                    count=len(dim_cal_df),
+                    years_covered=list(years))
+        
+        return dim_cal_df
+    
+    # ==========================================
+    # Data Quality Validation
+    # ==========================================
+    
+    def _validate_data_quality(self, raw_df: pd.DataFrame,
+                                cleaned_df: pd.DataFrame) -> DataQualitySummary:
+        """
+        Run data quality checks on transformed data.
+        
+        Validates:
+        - NULL coverage for critical columns (< 5% threshold)
+        - Score range validity (scores in [0, 100] when not NULL)
+        - Row count consistency (output = input × areas)
+        
+        Args:
+            raw_df: Original raw DataFrame
+            cleaned_df: Transformed long-format DataFrame
+            
+        Returns:
+            DataQualitySummary with validation results
+        """
+        summary = DataQualitySummary(
+            total_input_rows=len(raw_df),
+            total_output_rows=len(cleaned_df),
+            areas_processed=cleaned_df['area'].nunique(),
+        )
+        
+        # Check 1: NULL score coverage
+        null_scores = cleaned_df['is_null_score'].sum()
+        summary.null_scores_count = int(null_scores)
+        summary.null_scores_percent = round(
+            (null_scores / len(cleaned_df)) * 100, 2
+        ) if len(cleaned_df) > 0 else 0.0
+        
+        logger.info("Data quality: NULL score coverage",
+                    null_count=summary.null_scores_count,
+                    null_percent=summary.null_scores_percent)
+        
+        # Check 2: Score range validity (for non-NULL scores)
+        valid_scores = cleaned_df[~cleaned_df['is_null_score']]['score']
+        if len(valid_scores) > 0:
+            out_of_range = ((valid_scores < 0) | (valid_scores > 100)).sum()
+            if out_of_range > 0:
+                summary.score_range_valid = False
+                msg = f"{out_of_range} scores out of valid range [0, 100]"
+                summary.errors.append(msg)
+                logger.error(f"Data quality: {msg}")
+        
+        # Check 3: Critical column NULL coverage
+        critical_cols = ['id_ie', 'id_seccion', 'year', 'area']
+        for col in critical_cols:
+            if col in cleaned_df.columns:
+                null_pct = round(
+                    (cleaned_df[col].isna().sum() / len(cleaned_df)) * 100, 2
+                )
+                summary.critical_null_coverage[col] = null_pct
+                
+                if null_pct > 5.0:
+                    msg = f"Critical column '{col}' has {null_pct}% NULL coverage (threshold: 5%)"
+                    summary.warnings.append(msg)
+                    logger.warning(msg)
+                
+                if null_pct > 20.0:
+                    msg = f"FAIL: Critical column '{col}' has {null_pct}% NULL coverage (exceeds 20%)"
+                    summary.errors.append(msg)
+                    logger.error(msg)
+        
+        # Check 4: Row count consistency
+        expected_rows = len(raw_df) * len(AREA_COLUMN_MAP)
+        if len(cleaned_df) != expected_rows:
+            msg = (f"Row count mismatch: expected {expected_rows} "
+                   f"(input: {len(raw_df)} × {len(AREA_COLUMN_MAP)} areas), "
+                   f"got {len(cleaned_df)}")
+            summary.warnings.append(msg)
+            logger.warning(msg)
+        
+        # Log summary
+        logger.info("Data quality validation complete",
+                    is_valid=summary.is_valid,
+                    warnings=len(summary.warnings),
+                    errors=len(summary.errors))
+        
+        return summary
+
+
+# ==========================================
+# Convenience Function
+# ==========================================
+
+def run_etl_pipeline(mongodb_uri: Optional[str] = None,
+                     gcp_project_id: Optional[str] = None,
+                     gcp_credentials_path: Optional[str] = None) -> ETLResult:
+    """
+    Run the complete ETL pipeline from MongoDB to BigQuery.
+    
+    Args:
+        mongodb_uri: MongoDB connection string (uses env if None)
+        gcp_project_id: GCP project ID (uses env if None)
+        gcp_credentials_path: Path to GCP credentials JSON (uses env if None)
+    
+    Returns:
+        ETLResult with execution status and metadata
+    """
+    transform = ETLTransform(
+        mongodb_uri=mongodb_uri,
+        gcp_project_id=gcp_project_id,
+        gcp_credentials_path=gcp_credentials_path,
+    )
+    return transform.run_full_pipeline()

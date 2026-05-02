@@ -1,0 +1,92 @@
+# ==========================================
+# ENLA 2026 Callao - dbt Source Definitions
+# Sprint 6: dbt Transformations
+# ==========================================
+
+version: 2
+
+sources:
+  - name: enla_raw
+    description: "Raw data sources for ENLA 2026 Callao project"
+    database: "{{ env_var('DBT_PROJECT_ID', 'bigquery-project-id') }}"
+    schema: "enla_raw"
+
+    tables:
+      - name: enla_callao_raw
+        description: "Raw data ingested from MongoDB (source: Excel → MongoDB → BigQuery)"
+        columns:
+          - name: institution_id
+            description: "Unique identifier for each educational institution"
+            tests:
+              - unique
+              - not_null
+          - name: nom_ie
+            description: "Name of the educational institution"
+          - name: area
+            description: "Academic area (comunicacion, matematica, ccss, cyt)"
+          - name: score_2023
+            description: "Score achieved in 2023"
+          - name: score_2022
+            description: "Score achieved in 2022"
+          - name: score_2021
+            description: "Score achieved in 2021"
+
+      - name: fact_enla
+        description: "Fact table with cleaned and transformed ENLA data"
+        columns:
+          - name: institution_id
+            tests:
+              - not_null
+          - name: area
+            tests:
+              - not_null
+              - accepted_values:
+                  values: ['comunicacion', 'matematica', 'ccss', 'cyt']
+
+      - name: enla_callao_features
+        description: "Feature table created by Python feature engineering (Sprint 3)"
+        columns:
+          - name: institution_id
+            tests:
+              - not_null
+          - name: area
+            tests:
+              - not_null
+          - name: avg_score_2023
+            description: "Average score for 2023"
+          - name: trend
+            description: "Score trend over time"
+          - name: variance
+            description: "Score variance"
+
+      - name: enla_callao_predictions_2026
+        description: "ML model predictions for 2026"
+        columns:
+          - name: institution_id
+            tests:
+              - not_null
+          - name: area
+            tests:
+              - not_null
+          - name: predicted_success
+            description: "Binary prediction (0/1)"
+          - name: confidence
+            description: "Prediction confidence score (0-1)"
+          - name: risk_level
+            description: "Risk classification (ALTO/MEDIO/BAJO)"
+            tests:
+              - accepted_values:
+                  values: ['ALTO', 'MEDIO', 'BAJO']
+          - name: model_version
+            description: "Version of the model used for prediction"
+          - name: prediction_ts
+            description: "Timestamp of prediction"
+
+# ==========================================
+# Source Tests
+# ==========================================
+
+# Additional tests can be added here:
+# - Unique combinations
+# - Referential integrity between tables
+# - Row count validation

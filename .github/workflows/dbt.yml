@@ -1,0 +1,50 @@
+name: Deploy dbt Models
+
+on:
+  push:
+    branches: [main]
+    paths: ['dbt/**']
+
+jobs:
+  dbt:
+    runs-on: ubuntu-latest
+    
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      
+      - name: Install dbt
+        run: pip install dbt-bigquery==1.5.0
+      
+      - name: Authenticate to Google Cloud
+        uses: google-github-actions/auth@v2
+        with:
+          credentials_json: ${{ secrets.GCP_SA_KEY }}
+      
+      - name: Configure dbt profile
+        run: |
+          mkdir -p ~/.dbt
+          cat > ~/.dbt/profiles.yml << EOF
+          enla_callao:
+            target: prod
+            outputs:
+              prod:
+                type: bigquery
+                method: oauth
+                project: ${{ secrets.GCP_PROJECT_ID }}
+                dataset: BI_ENLA
+                threads: 4
+                timeout_seconds: 300
+                location: US
+          EOF
+      
+      - name: Run dbt models
+        working-directory: dbt
+        run: |
+          dbt deps
+          dbt run
+          dbt test

@@ -1,0 +1,69 @@
+# Environment
+.env
+.env.local
+.env.*.local
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+venv/
+env/
+ENV/
+.venv
+*.egg-info/
+dist/
+build/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*.iml
+
+# Testing
+.pytest_cache/
+.coverage
+htmlcov/
+.tox/
+
+# Data (never commit real data)
+data/raw/*.xlsx
+data/raw/*.csv
+data/processed/*.csv
+data/processed/*.parquet
+*.parquet
+
+# Logs
+logs/*.log
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Terraform
+.terraform/
+*.tfstate
+*.tfstate.backup
+terraform.tfvars.json
+crash.log
+crash.*.log
+override.tf.json
+override.tf
+*.overrides.tfvars
+tfplan
+
+# dbt
+target/
+dbt_packages/
+
+# GCP
+*.json
+!dbt_project.yml
+
+# Credentials (secret manager files)
+service-account-key.json
+credentials.json
