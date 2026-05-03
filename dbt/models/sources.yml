@@ -21,7 +21,7 @@ version: 2
 sources:
   - name: enla_raw
     description: "Raw data sources for ENLA 2026 Callao project"
-    database: "{{ env_var('DBT_PROJECT_ID', 'bigquery-project-id') }}"
+    database: "{{ env_var('BQ_PROJECT', 'enla-2026-callao') }}"
     schema: "{{ env_var('DBT_DATASET_ID', 'BI_ENLA') }}"
 
     tables:

@@ -1,5 +1,15 @@
 name: Deploy dbt Models
 
+# NOTE: This workflow depends on tables created by Python pipeline
+# Run pipeline-trigger.yml or run-notebook.yml FIRST to create:
+# - enla_callao_raw (MongoDB → BigQuery, via src/etl/transform.py)
+# - fact_enla (ETL transformation, via src/etl/transform.py)
+# - enla_callao_features (Feature engineering, via src/features/engineer.py)
+# - enla_callao_predictions_2026 (ML predictions, via src/models/predictor.py)
+#
+# dbt is a presentation layer only - it creates views on top of the above tables.
+# If you get "Access Denied" errors, the source tables likely don't exist yet.
+
 on:
   push:
     branches: [main]
@@ -46,25 +56,51 @@ jobs:
         run: |
           mkdir -p ~/.dbt
           cat > ~/.dbt/profiles.yml << 'EOF'
-          enla_callao:
-            target: prod
-            outputs:
-              prod:
-                type: bigquery
-                method: oauth
-                project: ${{ secrets.GCP_PROJECT_ID || 'enla-2026-callao' }}
-                dataset: BI_ENLA
-                threads: 4
-                timeout_seconds: 300
-                location: southamerica-east1
-          EOF
+enla_callao:
+  target: prod
+  outputs:
+    prod:
+      type: bigquery
+      method: oauth
+      project: ${{ secrets.GCP_PROJECT_ID || 'enla-2026-callao' }}
+      dataset: BI_ENLA
+      threads: 4
+      timeout_seconds: 300
+      location: southamerica-east1
+EOF
+        env:
+          # Ensure BQ_PROJECT is available for sources.yml env_var() calls
+          BQ_PROJECT: ${{ secrets.GCP_PROJECT_ID || 'enla-2026-callao' }}
        
       - name: Create BigQuery dataset if not exists
         run: |
           bq mk --dataset --location=southamerica-east1 ${{ secrets.GCP_PROJECT_ID || 'enla-2026-callao' }}:BI_ENLA || echo "Dataset already exists or creation skipped"
         env:
           GCP_SA_KEY: ${{ secrets.GCP_SA_KEY }}
-       
+        
+      - name: Check if source tables exist
+        run: |
+          echo "Checking if required source tables exist..."
+          BQ_PROJECT="${{ secrets.GCP_PROJECT_ID || 'enla-2026-callao' }}"
+          TABLES=("enla_callao_raw" "fact_enla" "enla_callao_features" "enla_callao_predictions_2026")
+          MISSING=0
+          for TABLE in "${TABLES[@]}"; do
+            if bq show --project_id="$BQ_PROJECT" --dataset_id=BI_ENLA "$TABLE" &>/dev/null; then
+              echo "✅ Table $TABLE exists"
+            else
+              echo "❌ Table $TABLE NOT FOUND - Run Python pipeline (pipeline-trigger.yml) first!"
+              MISSING=$((MISSING + 1))
+            fi
+          done
+          if [ $MISSING -gt 0 ]; then
+            echo ""
+            echo "⚠️ WARNING: $MISSING required source table(s) missing."
+            echo "Please run the Python pipeline first: .github/workflows/pipeline-trigger.yml"
+            echo "dbt will fail with 'Access Denied' errors if tables don't exist."
+          fi
+        env:
+          GCP_SA_KEY: ${{ secrets.GCP_SA_KEY }}
+        
       - name: Run dbt models
         working-directory: dbt
         run: |
