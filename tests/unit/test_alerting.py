@@ -350,16 +350,24 @@ class TestSendEmail(unittest.TestCase):
 
     def test_send_email_no_api_key(self):
         """Test email sending fails without API key."""
-        manager = AlertManager(sendgrid_api_key='')
+        # Mock settings to ensure no API key is present
+        with patch('src.alerting.email_alert.settings') as mock_settings:
+            mock_settings.SENDGRID_API_KEY = ''
+            mock_settings.ALERT_EMAIL_FROM = 'test@example.com'
+            mock_settings.ALERT_EMAIL_TO = []
 
-        with self.assertRaises(EmailSendError) as context:
-            manager.send_email(
-                to_emails=['recipient@example.com'],
-                subject='Test',
-                html_content='<html>Test</html>'
-            )
+            # Even if we pass empty string, __init__ will fall back to settings
+            # But since we mocked settings.SENDGRID_API_KEY = '', it will be empty
+            manager = AlertManager(sendgrid_api_key='')
 
-        self.assertIn('not configured', str(context.exception))
+            with self.assertRaises(EmailSendError) as context:
+                manager.send_email(
+                    to_emails=['recipient@example.com'],
+                    subject='Test',
+                    html_content='<html>Test</html>'
+                )
+
+            self.assertIn('not configured', str(context.exception))
 
     def test_send_email_no_recipients(self):
         """Test email sending fails without recipients."""
