@@ -3,7 +3,10 @@ name: Deploy dbt Models
 on:
   push:
     branches: [main]
-    paths: ['dbt/**']
+    paths:
+      - 'dbt/**'
+      - '.github/workflows/dbt.yml'
+  workflow_dispatch:
 
 jobs:
   dbt:
