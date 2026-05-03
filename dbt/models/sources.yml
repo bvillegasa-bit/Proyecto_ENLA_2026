@@ -65,18 +65,43 @@ sources:
           - name: score
             description: "Student score [0, 100]"
 
-# ==========================================
-# NOTE: The following tables are created by Python (NOT dbt sources).
-# They are documented here for reference only.
-# In dbt models, they are referenced using {{ ref() }} which works
-# because the tables already exist in BigQuery (created by Python pipeline).
-# ==========================================
-#
-# Tables created by Python:
-# - enla_callao_features (src/features/engineer.py)
-# - enla_callao_predictions_2026 (src/models/predictor.py)
-#
-# These tables have 'area' column with values: comunicacion, matematica, ccss
-# (NO 'cyt' - no CyT data exists in the source Excel file)
-#
-# ==========================================
+      - name: enla_callao_features
+        description: >
+          Feature engineering output table created by Python (src/features/engineer.py).
+          Contains aggregated features per institution per academic area:
+          avg_score_2023, avg_score_2022, avg_score_2021, trend, variance, target.
+          Academic areas: comunicacion, matematica, ccss (NO cyt)
+        columns:
+          - name: institution_id
+            description: "Institution ID"
+            tests:
+              - not_null
+          - name: area
+            description: "Academic area: comunicacion, matematica, ccss"
+            tests:
+              - not_null
+          - name: avg_score_2023
+            description: "Average score for 2023"
+          - name: trend
+            description: "Score trend over time"
+
+      - name: enla_callao_predictions_2026
+        description: >
+          ML predictions output table created by Python (src/models/predictor.py).
+          Contains predictions for 2026: risk_level, confidence, predicted_success.
+          Academic areas: comunicacion, matematica, ccss (NO cyt)
+        columns:
+          - name: institution_id
+            description: "Institution ID"
+            tests:
+              - not_null
+          - name: area
+            description: "Academic area: comunicacion, matematica, ccss"
+            tests:
+              - not_null
+          - name: risk_level
+            description: "Predicted risk level: ALTO, MEDIO, BAJO"
+          - name: confidence
+            description: "Prediction confidence score [0, 1]"
+          - name: predicted_success
+            description: "Binary prediction: 1 = success, 0 = at risk"

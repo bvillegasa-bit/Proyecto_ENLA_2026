@@ -27,8 +27,8 @@ SELECT
   p.risk_level,
   p.model_version,
   p.prediction_ts
-FROM {{ ref('enla_callao_features') }} f
-LEFT JOIN {{ ref('enla_callao_predictions_2026') }} p
+FROM {{ source('enla_raw', 'enla_callao_features') }} f
+LEFT JOIN {{ source('enla_raw', 'enla_callao_predictions_2026') }} p
   ON f.institution_id = p.institution_id
   AND f.area = p.area
 WHERE f.area = 'cyt'  -- No data for this area - view will be empty

@@ -24,8 +24,8 @@ SELECT
   AVG(trend) as avg_trend
 FROM (
   SELECT f.*, p.risk_level, p.confidence, p.predicted_success
-  FROM {{ ref('enla_callao_features') }} f
-  JOIN {{ ref('enla_callao_predictions_2026') }} p
-    ON f.institution_id = p.institution_id AND f.area = p.area
+FROM {{ source('enla_raw', 'enla_callao_features') }} f
+   JOIN {{ source('enla_raw', 'enla_callao_predictions_2026') }} p
+     ON f.institution_id = p.institution_id AND f.area = p.area
 )
 GROUP BY area
