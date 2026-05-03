@@ -8,30 +8,66 @@ on:
 jobs:
   run-pipeline:
     runs-on: ubuntu-latest
+    env:
+      GCP_SA_KEY: ${{ secrets.GCP_SA_KEY }}
 
     steps:
-    - uses: actions/checkout@v3
+    - uses: actions/checkout@v4
 
     - name: Set up Python
-      uses: actions/setup-python@v4
+      uses: actions/setup-python@v5
       with:
-        python-version: '3.9'
+        python-version: '3.11'
 
     - name: Install dependencies
-      run: |
-        pip install pandas pymongo scikit-learn google-cloud-bigquery sendgrid
+      run: pip install -r requirements.txt
 
-    - name: Run pipeline script
+    - name: Authenticate to Google Cloud
+      if: ${{ env.GCP_SA_KEY != '' }}
+      uses: google-github-actions/auth@v2
+      with:
+        credentials_json: ${{ secrets.GCP_SA_KEY }}
+
+    - name: Run pipeline
+      run: |
+        python -c "
+        from src.etl.transform import run_etl_pipeline
+        from src.features.engineer import run_feature_pipeline
+        from src.models.trainer import ModelTrainer
+        from src.models.predictor import ENLAPredictor
+        from src.alerting.email_alert import AlertManager
+        import os
+        
+        # ETL
+        etl_result = run_etl_pipeline()
+        print(f'ETL: {etl_result.status}')
+        
+        # Features
+        feat_result = run_feature_pipeline()
+        print(f'Features: {feat_result.status}')
+        
+        # Models (train + predict)
+        from src.database.bigquery_client import get_bq_client
+        bq_client = get_bq_client()
+        
+        trainer = ModelTrainer(bigquery_client=bq_client, project_id='${{ secrets.GCP_PROJECT_ID }}', dataset_id='BI_ENLA')
+        trainer.train_all_models()
+        
+        predictor = ENLAPredictor(bigquery_client=bq_client, project_id='${{ secrets.GCP_PROJECT_ID }}', dataset_id='BI_ENLA')
+        pred_result = predictor.run_full_prediction_pipeline()
+        print(f'Predictions: {pred_result.status}')
+        
+        # Alerts
+        alerter = AlertManager(bigquery_client=bq_client, project_id='${{ secrets.GCP_PROJECT_ID }}', dataset_id='BI_ENLA')
+        alert_result = alerter.trigger_alerts()
+        print(f'Alerts: {alert_result.status}')
+        "
       env:
         MONGODB_URI: ${{ secrets.MONGODB_URI }}
-        BQ_PROJECT: ${{ secrets.BQ_PROJECT }}
+        GCP_PROJECT_ID: ${{ secrets.GCP_PROJECT_ID }}
         SENDGRID_API_KEY: ${{ secrets.SENDGRID_API_KEY }}
-        EMAIL_FROM: ${{ secrets.EMAIL_FROM }}
-        EMAIL_TO: ${{ secrets.EMAIL_TO }}
-      run: |
-        python scripts/run_pipeline.py
 
     - name: Commit and push if changed
-      uses: stefanzweifel/git-auto-commit-action@v4
+      uses: stefanzweifel/git-auto-commit-action@v5
       with:
         commit_message: "Auto-update predictions"
