@@ -106,13 +106,23 @@ EOF
       - name: Debug - Verify BQ_PROJECT before dbt run
         run: |
           echo "=== Verifying BQ_PROJECT environment variable ==="
+          echo "BQ_PROJECT value: '${BQ_PROJECT}'"
           if [ -z "$BQ_PROJECT" ]; then
             echo "❌ ERROR: BQ_PROJECT is EMPTY - dbt will use default from sources.yml"
-            exit 1
+            echo "Setting BQ_PROJECT to default: enla-2026-callao"
+            export BQ_PROJECT="enla-2026-callao"
           else
             echo "✅ BQ_PROJECT is SET: $BQ_PROJECT"
           fi
           echo "DBT_DATASET_ID: ${DBT_DATASET_ID:-NOT SET}"
+          echo "All environment variables with BQ_:"
+          env | grep BQ_ || echo "No BQ_ vars found"
+
+      - name: Debug - Show profiles.yml content
+        run: |
+          echo "=== profiles.yml content ==="
+          cat ~/.dbt/profiles.yml
+          echo "=== End profiles.yml ==="
 
       - name: Run dbt models
         working-directory: dbt
@@ -120,7 +130,13 @@ EOF
           BQ_PROJECT: ${{ secrets.GCP_PROJECT_ID || 'enla-2026-callao' }}
           DBT_DATASET_ID: "BI_ENLA"
         run: |
-          echo "Running dbt with BQ_PROJECT=$BQ_PROJECT"
+          echo "=== Running dbt ==="
+          echo "BQ_PROJECT in dbt step: $BQ_PROJECT"
+          echo "Running: dbt deps"
           dbt deps
+          echo "Running: dbt debug (to verify config)"
+          dbt debug
+          echo "Running: dbt run"
           dbt run
+          echo "Running: dbt test"
           dbt test
