@@ -12,6 +12,7 @@ jobs:
     env:
       GCP_SA_KEY: ${{ secrets.GCP_SA_KEY }}
       BQ_PROJECT: ${{ secrets.GCP_PROJECT_ID || 'enla-2026-callao' }}
+      GCP_PROJECT_NUMBER: "318247247954"
     permissions:
       contents: read
       id-token: write
@@ -36,6 +37,22 @@ jobs:
           echo "Checking environment variables..."
           [ -z "$GCP_SA_KEY" ] && echo "GCP_SA_KEY is EMPTY" || echo "GCP_SA_KEY is SET"
           [ -z "$BQ_PROJECT" ] && echo "BQ_PROJECT is EMPTY" || echo "BQ_PROJECT is SET"
+          [ -z "$GCP_PROJECT_NUMBER" ] && echo "GCP_PROJECT_NUMBER is EMPTY" || echo "GCP_PROJECT_NUMBER is SET"
+      
+      # CRITICAL: Enable required GCP APIs before deployment
+      # NOTE TO USER: The service account (from GCP_SA_KEY secret) needs the role
+      # "roles/serviceusage.serviceUsageAdmin" to enable APIs. If this step fails,
+      # you must manually enable the APIs via the GCP Console first:
+      # https://console.developers.google.com/apis/api/cloudresourcemanager.googleapis.com/overview?project=318247247954
+      - name: Enable required GCP APIs
+        run: |
+          echo "Enabling required GCP APIs for Cloud Function deployment..."
+          gcloud services enable cloudresourcemanager.googleapis.com \
+            cloudfunctions.googleapis.com \
+            compute.googleapis.com \
+            artifactregistry.googleapis.com \
+            --project=${{ secrets.GCP_PROJECT_ID || 'enla-2026-callao' }}
+        continue-on-error: true  # Don't fail if APIs are already enabled or permissions are insufficient
       
       - name: Deploy Cloud Function
         run: |
@@ -50,3 +67,28 @@ jobs:
             --project=${{ secrets.GCP_PROJECT_ID || 'enla-2026-callao' }} \
             --set-secrets=MONGODB_URI=MONGODB_URI:latest,SENDGRID_API_KEY=SENDGRID_API_KEY:latest \
             --source=gcp/functions/enla_orchestrator/
+
+# =============================================================================
+# USER ACTION REQUIRED (Cannot be done automatically):
+# =============================================================================
+# 1. ENABLE CLOUD RESOURCE MANAGER API:
+#    Visit: https://console.developers.google.com/apis/api/cloudresourcemanager.googleapis.com/overview?project=318247247954
+#    Click "ENABLE" to enable the Cloud Resource Manager API.
+#
+# 2. GRANT REQUIRED IAM ROLES to the service account (from GCP_SA_KEY secret):
+#    Go to: https://console.cloud.google.com/iam-admin/iam?project=318247247954
+#    Find the service account (ends with @appspot.gserviceaccount.com or similar)
+#    Add these roles:
+#    - roles/cloudfunctions.developer (to deploy Cloud Functions)
+#    - roles/iam.serviceAccountUser (to run functions under other service accounts)
+#    - roles/serviceusage.serviceUsageAdmin (to enable APIs)
+#    - roles/storage.admin (to access source code in Cloud Storage)
+#
+# 3. VERIFY APIs ARE ENABLED:
+#    Go to: https://console.cloud.google.com/apis/dashboard?project=318247247954
+#    Ensure these APIs are enabled:
+#    - Cloud Resource Manager API
+#    - Cloud Functions API
+#    - Compute Engine API
+#    - Artifact Registry API
+# =============================================================================
