@@ -23,11 +23,11 @@ jobs:
     env:
       MONGODB_URI: ${{ secrets.MONGODB_URI }}
       GCP_SA_KEY: ${{ secrets.GCP_SA_KEY }}
-      GCP_PROJECT_ID: ${{ vars.BQ_PROJECT || secrets.GCP_PROJECT_ID || 'enla-2026-callao' }}
+      GCP_PROJECT_ID: ${{ vars.BQ_PROJECT || 'enla-2026-callao' }}
       SENDGRID_API_KEY: ${{ secrets.SENDGRID_API_KEY }}
       EMAIL_FROM: ${{ vars.EMAIL_FROM }}
       EMAIL_TO: ${{ vars.EMAIL_TO }}
-      BQ_PROJECT: ${{ vars.BQ_PROJECT || secrets.GCP_PROJECT_ID || 'enla-2026-callao' }}
+      BQ_PROJECT: ${{ vars.BQ_PROJECT || 'enla-2026-callao' }}
     
     steps:
       - uses: actions/checkout@v4
@@ -41,25 +41,31 @@ jobs:
         run: pip install -r requirements.txt
         
       - name: Authenticate to Google Cloud
-        if: ${{ env.GCP_SA_KEY != '' }}
+        if: ${{ secrets.GCP_SA_KEY != '' }}
         uses: google-github-actions/auth@v2
         with:
           credentials_json: ${{ secrets.GCP_SA_KEY }}
        
-      - name: Debug - Check env vars
+      - name: Debug - Check env vars (CRITICAL)
         run: |
-          echo "Checking environment variables..."
+          echo "=== CHECKING ENVIRONMENT VARIABLES ==="
+          echo "MONGODB_URI length: ${#MONGODB_URI}"
           if [ -z "$MONGODB_URI" ]; then
-            echo "ERROR: MONGODB_URI is EMPTY or not set"
+            echo "❌ ERROR: MONGODB_URI is EMPTY or not set"
+            echo "This means secrets.MONGODB_URI is not being injected"
             exit 1
           else
-            echo "OK: MONGODB_URI is SET (length: ${#MONGODB_URI})"
+            echo "✅ OK: MONGODB_URI is SET (length: ${#MONGODB_URI})"
+            echo "First 20 chars: ${MONGODB_URI:0:20}..."
           fi
-          [ -z "$SENDGRID_API_KEY" ] && echo "SENDGRID_API_KEY is EMPTY" || echo "SENDGRID_API_KEY is SET"
-          [ -z "$GCP_PROJECT_ID" ] && echo "GCP_PROJECT_ID is EMPTY" || echo "GCP_PROJECT_ID is SET"
+          [ -z "$SENDGRID_API_KEY" ] && echo "⚠️ SENDGRID_API_KEY is EMPTY" || echo "✅ SENDGRID_API_KEY is SET"
+          [ -z "$GCP_PROJECT_ID" ] && echo "⚠️ GCP_PROJECT_ID is EMPTY" || echo "✅ GCP_PROJECT_ID is SET (${GCP_PROJECT_ID})"
           echo "EMAIL_FROM: ${EMAIL_FROM:-NOT SET}"
           echo "EMAIL_TO: ${EMAIL_TO:-NOT SET}"
-       
+        env:
+          # Explicitly pass secrets again at step level
+          MONGODB_URI: ${{ secrets.MONGODB_URI }}
+
       - name: Trigger Pipeline
         run: |
           python -c "
@@ -69,6 +75,15 @@ jobs:
           from src.models.predictor import ENLAPredictor
           from src.alerting.email_alert import AlertManager
           import os
+          
+          # Debug: check if MongoDB URI is available
+          mongodb_uri = os.environ.get('MONGODB_URI')
+          if not mongodb_uri:
+              print('ERROR: MONGODB_URI not found in environment')
+              print('Available env vars with MONGODB:', [k for k in os.environ.keys() if 'MONGO' in k.upper()])
+              raise ValueError('MONGODB_URI not provided')
+          else:
+              print(f'OK: MONGODB_URI found (length: {len(mongodb_uri)})')
           
           os.environ['GOOGLE_APPLICATION_CREDENTIALS'] = os.environ.get('GOOGLE_GHA_CREDS_PATH', '')
           
@@ -96,3 +111,6 @@ jobs:
           alert_result = alerter.trigger_alerts()
           print(f'Alerts: {alert_result.status}')
           "
+        env:
+          # Pass critical secrets at step level too
+          MONGODB_URI: ${{ secrets.MONGODB_URI }}
