@@ -1,109 +1,47 @@
 name: Run ENLA 2026 Pipeline
 
 on:
+  push:
+    branches: [main]
   schedule:
     - cron: '0 3 * * *'  # Diario a las 03:00 UTC (10pm Peru)
-  workflow_dispatch:  # Permite ejecucion manual
+  workflow_dispatch:
 
 jobs:
   run-pipeline:
     runs-on: ubuntu-latest
-    # Environment variables at JOB level - available to ALL steps
     env:
       MONGODB_URI: ${{ secrets.MONGODB_URI }}
+      SENDGRID_API_KEY: ${{ secrets.SENDGRID_API_KEY }}
       GCP_SA_KEY: ${{ secrets.GCP_SA_KEY }}
       GCP_PROJECT_ID: ${{ vars.BQ_PROJECT || 'enla-2026-callao' }}
-      SENDGRID_API_KEY: ${{ secrets.SENDGRID_API_KEY }}
       EMAIL_FROM: ${{ vars.EMAIL_FROM }}
       EMAIL_TO: ${{ vars.EMAIL_TO }}
-      BQ_PROJECT: ${{ vars.BQ_PROJECT || 'enla-2026-callao' }}
-
+   
     steps:
-    - uses: actions/checkout@v4
-
-    - name: Set up Python
-      uses: actions/setup-python@v5
-      with:
-        python-version: '3.11'
-
-    - name: Install dependencies
-      run: pip install -r requirements.txt
-
-    - name: Authenticate to Google Cloud
-      if: ${{ secrets.GCP_SA_KEY != '' }}
-      uses: google-github-actions/auth@v2
-      with:
-        credentials_json: ${{ secrets.GCP_SA_KEY }}
-
-    - name: Debug - Check env vars (CRITICAL)
-      run: |
-        echo "=== CHECKING ENVIRONMENT VARIABLES ==="
-        echo "MONGODB_URI length: ${#MONGODB_URI}"
-        if [ -z "$MONGODB_URI" ]; then
-          echo "❌ ERROR: MONGODB_URI is EMPTY or not set"
-          echo "This means secrets.MONGODB_URI is not being injected"
-          exit 1
-        else
-          echo "✅ OK: MONGODB_URI is SET (length: ${#MONGODB_URI})"
-          # Show first 20 chars to verify it's not empty (safe debug)
-          echo "First 20 chars: ${MONGODB_URI:0:20}..."
-        fi
-        [ -z "$SENDGRID_API_KEY" ] && echo "⚠️ SENDGRID_API_KEY is EMPTY" || echo "✅ SENDGRID_API_KEY is SET"
-        [ -z "$GCP_PROJECT_ID" ] && echo "⚠️ GCP_PROJECT_ID is EMPTY" || echo "✅ GCP_PROJECT_ID is SET (${GCP_PROJECT_ID})"
-        echo "EMAIL_FROM: ${EMAIL_FROM:-NOT SET}"
-        echo "EMAIL_TO: ${EMAIL_TO:-NOT SET}"
-      env:
-        # Explicitly pass secrets again at step level to ensure they're available
-        MONGODB_URI: ${{ secrets.MONGODB_URI }}
-
-    - name: Run pipeline
-      run: |
-        python -c "
-        from src.etl.transform import run_etl_pipeline
-        from src.features.engineer import run_feature_pipeline
-        from src.models.trainer import ModelTrainer
-        from src.models.predictor import ENLAPredictor
-        from src.alerting.email_alert import AlertManager
-        import os
-        
-        # Debug: check if MongoDB URI is available
-        mongodb_uri = os.environ.get('MONGODB_URI')
-        if not mongodb_uri:
-            print('ERROR: MONGODB_URI not found in environment')
-            print('Available env vars with MONGODB:', [k for k in os.environ.keys() if 'MONGO' in k.upper()])
-            raise ValueError('MONGODB_URI not provided')
-        else:
-            print(f'OK: MONGODB_URI found (length: {len(mongodb_uri)})')
-        
-        # ETL
-        etl_result = run_etl_pipeline()
-        print(f'ETL: {etl_result.status}')
-        
-        # Features
-        feat_result = run_feature_pipeline()
-        print(f'Features: {feat_result.status}')
-        
-        # Models (train + predict)
-        from src.database.bigquery_client import get_bq_client
-        bq_client = get_bq_client()
-        
-        trainer = ModelTrainer(bigquery_client=bq_client, project_id=os.environ.get('GCP_PROJECT_ID'), dataset_id='BI_ENLA')
-        trainer.train_all_models()
-        
-        predictor = ENLAPredictor(bigquery_client=bq_client, project_id=os.environ.get('GCP_PROJECT_ID'), dataset_id='BI_ENLA')
-        pred_result = predictor.run_full_prediction_pipeline()
-        print(f'Predictions: {pred_result.status}')
-        
-        # Alerts
-        alerter = AlertManager(bigquery_client=bq_client, project_id=os.environ.get('GCP_PROJECT_ID'), dataset_id='BI_ENLA')
-        alert_result = alerter.trigger_alerts()
-        print(f'Alerts: {alert_result.status}')
-        "
-      env:
-        # Pass critical secrets at step level too
-        MONGODB_URI: ${{ secrets.MONGODB_URI }}
-
-    - name: Commit and push if changed
-      uses: stefanzweifel/git-auto-commit-action@v5
-      with:
-        commit_message: "Auto-update predictions"
+      - uses: actions/checkout@v4
+      
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      
+      - name: Install deps
+        run: pip install -r requirements.txt
+      
+      - name: DEBUG - Print all env vars (safe)
+        run: |
+          echo "Checking critical env vars..."
+          for var in MONGODB_URI SENDGRID_API_KEY GCP_SA_KEY; do
+            if [ -z "${!var}" ]; then
+              echo "❌ $var is EMPTY"
+            else
+              echo "✅ $var is SET (length: ${#var})"
+            fi
+          done
+          echo "GCP_PROJECT_ID: ${GCP_PROJECT_ID:-NOT SET}"
+          echo "EMAIL_FROM: ${EMAIL_FROM:-NOT SET}"
+          echo "EMAIL_TO: ${EMAIL_TO:-NOT SET}"
+      
+      - name: Run pipeline
+        run: python -c "from src.etl.transform import run_etl_pipeline; run_etl_pipeline()"
