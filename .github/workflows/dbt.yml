@@ -12,6 +12,7 @@ jobs:
     env:
       GCP_SA_KEY: ${{ secrets.GCP_SA_KEY }}
       BQ_PROJECT: ${{ secrets.GCP_PROJECT_ID || 'enla-2026-callao' }}
+      DBT_DATASET_ID: "BI_ENLA"
     steps:
       - name: Check GCP credentials
         if: ${{ env.GCP_SA_KEY != '' }}
@@ -54,7 +55,13 @@ jobs:
                 timeout_seconds: 300
                 location: US
           EOF
-      
+       
+      - name: Create BigQuery dataset if not exists
+        run: |
+          bq mk --dataset --location=US ${{ secrets.GCP_PROJECT_ID || 'enla-2026-callao' }}:BI_ENLA || echo "Dataset already exists or creation skipped"
+        env:
+          GCP_SA_KEY: ${{ secrets.GCP_SA_KEY }}
+       
       - name: Run dbt models
         working-directory: dbt
         run: |
