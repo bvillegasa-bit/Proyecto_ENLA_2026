@@ -21,16 +21,22 @@ class ValidationReport:
 class ENLAValidator:
     """Validator for ENLA data."""
     
+    # Corrected schema: EMA 2023 columns + single cor_est (student ID)
+    # NOTE: "area" column = geographic zone (Rural/Urban), NOT academic area
     REQUIRED_COLUMNS = {
         'id_ie', 'id_seccion', 'nom_ie', 'nom_dre',
         'ano_evaluacion', 'grado_evaluacion',
-        'cor_est_comunicacion', 'cor_est_matematica',
-        'cor_est_ccss', 'cor_est_cyt'
+        'cor_est', 'area',  # cor_est = student ID, area = geographic zone
+        'M500_EM_2S_2023_CT', 'M500_EM_2S_2023_MA', 'M500_EM_2S_2023_CS',
+        'grupo_EM_2S_2023_CT', 'grupo_EM_2S_2023_MA', 'grupo_EM_2S_2023_CS',
+        'peso_CT', 'peso_MA', 'peso_CS'
     }
     
+    # EMA 2023 score columns (3 academic areas, no 'cyt' data exists)
     SCORE_COLUMNS = [
-        'cor_est_comunicacion', 'cor_est_matematica',
-        'cor_est_ccss', 'cor_est_cyt'
+        'M500_EM_2S_2023_CT',  # Comunicación/Lectura
+        'M500_EM_2S_2023_MA',  # Matemática
+        'M500_EM_2S_2023_CS',  # Ciencias Sociales
     ]
     
     def __init__(self):

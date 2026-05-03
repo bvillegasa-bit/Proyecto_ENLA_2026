@@ -74,24 +74,29 @@ class ETLResult:
     total_rows_loaded: int = 0
     execution_time_seconds: float = 0.0
     error_message: Optional[str] = None
+    
+    @property
+    def status(self) -> str:
+        """Return status string based on success flag."""
+        return 'success' if self.success else 'failed'
 
 
 # ==========================================
 # Area Mapping Configuration
 # ==========================================
 
+# EMA 2023 column mappings: Excel column -> academic area name
+# Note: "area" column in Excel = geographic zone (Rural/Urban), NOT academic area
 AREA_COLUMN_MAP: Dict[str, str] = {
-    'cor_est_comunicacion': 'comunicacion',
-    'cor_est_matematica': 'matematica',
-    'cor_est_ccss': 'ccss',
-    'cor_est_cyt': 'cyt',
+    'M500_EM_2S_2023_CT': 'comunicacion',  # Comunicación/Lectura
+    'M500_EM_2S_2023_MA': 'matematica',    # Matemática
+    'M500_EM_2S_2023_CS': 'ccss',          # Ciencias Sociales
 }
 
 AREA_DISPLAY_NAMES: Dict[str, str] = {
     'comunicacion': 'Comunicación',
     'matematica': 'Matemática',
     'ccss': 'Ciencias Sociales',
-    'cyt': 'Ciencia y Tecnología',
 }
 
 
@@ -310,57 +315,66 @@ class ETLTransform:
     
     def _transform_to_long_format(self, raw_df: pd.DataFrame) -> pd.DataFrame:
         """
-        Transform wide-format data to long format by area.
+        Transform wide-format data to long format by academic area.
         
-        Converts from:
-            id_ie | cor_est_comunicacion | cor_est_matematica | ...
-        To:
-            id_ie | area         | score
-            IE001 | comunicacion | 72.5
-            IE001 | matematica   | 65.3
+        Converts from (wide - one row per student with all area scores):
+            id_ie | cor_est | area (geographic) | M500_EM_2S_2023_CT | M500_EM_2S_2023_MA | ...
+        To (long - one row per student per academic area):
+            id_ie | cor_est | area (geographic) | area_academica | score | grupo | peso
+            IE001 | EST001 | Urban             | comunicacion    | 72.5  | 2     | 1.0
+            IE001 | EST001 | Urban             | matematica      | 65.3  | 3     | 1.0
         
         Args:
             raw_df: Raw DataFrame from MongoDB
             
         Returns:
             DataFrame in long format with columns:
-            id_ie, id_seccion, nom_ie, nom_dre, year, area, score, is_null_score, created_at
+            id_ie, id_seccion, nom_ie, nom_dre, year, area (geographic),
+            cor_est, area_academica, score, grupo, peso, is_null_score, created_at
         """
         all_records = []
         
-        for mongo_col, area_name in AREA_COLUMN_MAP.items():
-            if mongo_col not in raw_df.columns:
-                logger.warning(f"Column '{mongo_col}' not found in raw data, skipping area '{area_name}'")
+        for score_col, area_name in AREA_COLUMN_MAP.items():
+            if score_col not in raw_df.columns:
+                logger.warning(f"Column '{score_col}' not found in raw data, skipping area '{area_name}'")
                 continue
             
-            # Extract score column and convert to numeric
-            scores = pd.to_numeric(raw_df[mongo_col], errors='coerce')
+            # Derive related column names
+            grupo_col = score_col.replace('M500_', 'grupo_')
+            peso_col = f"peso_{area_name[-2:].upper()}"  # peso_CT, peso_MA, peso_CS
             
-            # Create records for this area
+            # Extract score column and convert to numeric
+            scores = pd.to_numeric(raw_df[score_col], errors='coerce')
+            
+            # Create records for this academic area
             area_df = pd.DataFrame({
                 'id_ie': raw_df['id_ie'],
                 'id_seccion': raw_df['id_seccion'],
                 'nom_ie': raw_df['nom_ie'],
                 'nom_dre': raw_df['nom_dre'],
                 'year': raw_df['ano_evaluacion'],
-                'area': area_name,
+                'area': raw_df['area'],  # Geographic zone (Rural/Urban)
+                'cor_est': raw_df['cor_est'],  # Student identifier
+                'area_academica': area_name,  # Academic area name
                 'score': scores,
-                'is_null_score': [bool(v) for v in scores.isna()],
+                'grupo': raw_df[grupo_col] if grupo_col in raw_df.columns else None,
+                'peso': raw_df[peso_col] if peso_col in raw_df.columns else None,
+                'is_null_score': scores.isna(),
                 'created_at': datetime.now(timezone.utc),
             })
             
             all_records.append(area_df)
-            logger.debug(f"Processed area '{area_name}': {len(area_df)} records")
+            logger.debug(f"Processed academic area '{area_name}': {len(area_df)} records")
         
         if not all_records:
-            msg = "No area columns found in raw data"
+            msg = "No EMA 2023 area columns found in raw data"
             logger.error(msg)
             raise ETLTransformError(msg)
         
         cleaned_df = pd.concat(all_records, ignore_index=True)
         
         # Sort for consistency
-        cleaned_df = cleaned_df.sort_values(['id_ie', 'year', 'area']).reset_index(drop=True)
+        cleaned_df = cleaned_df.sort_values(['id_ie', 'cor_est', 'year', 'area_academica']).reset_index(drop=True)
         
         logger.info(f"Wide-to-long transformation complete | input_rows={len(raw_df)} output_rows={len(cleaned_df)} areas_processed={len(all_records)}")
         
@@ -386,7 +400,8 @@ class ETLTransform:
             'id_seccion': cleaned_df['id_seccion'],
             'nom_ie': cleaned_df['nom_ie'],
             'year': cleaned_df['year'].astype(int),
-            'area': cleaned_df['area'],
+            'area_academica': cleaned_df['area_academica'],  # Academic area (comunicacion/matematica/ccss)
+            'cor_est': cleaned_df['cor_est'],  # Student identifier
             'score': cleaned_df['score'],
             'created_at': cleaned_df['created_at'],
         })
@@ -400,7 +415,7 @@ class ETLTransform:
     
     def _create_dim_meta(self, cleaned_df: pd.DataFrame) -> pd.DataFrame:
         """
-        Create dim_meta table with institution targets per area per year.
+        Create dim_meta table with institution targets per academic area per year.
         
         Args:
             cleaned_df: Cleaned long-format DataFrame
@@ -408,15 +423,15 @@ class ETLTransform:
         Returns:
             DataFrame with dim_meta schema
         """
-        # Get unique institution-area-year combinations
-        unique_combos = cleaned_df[['id_ie', 'nom_ie', 'year', 'area']].drop_duplicates()
+        # Get unique institution-academic_area-year combinations
+        unique_combos = cleaned_df[['id_ie', 'nom_ie', 'year', 'area_academica']].drop_duplicates()
         
         dim_meta_df = pd.DataFrame({
             'meta_id': [str(uuid.uuid4()) for _ in range(len(unique_combos))],
             'id_ie': unique_combos['id_ie'],
             'nom_ie': unique_combos['nom_ie'],
             'year': unique_combos['year'].astype(int),
-            'area': unique_combos['area'],
+            'area': unique_combos['area_academica'],  # Academic area
             'target_score': settings.TARGET_SCORE_THRESHOLD,
             'region': settings.ENLA_REGION,
             'created_at': datetime.now(timezone.utc),
@@ -486,7 +501,8 @@ class ETLTransform:
         Validates:
         - NULL coverage for critical columns (< 5% threshold)
         - Score range validity (scores in [0, 100] when not NULL)
-        - Row count consistency (output = input × areas)
+        - Row count consistency (output = input × academic areas)
+        - Geographic zone (area) distribution
         
         Args:
             raw_df: Original raw DataFrame
@@ -498,7 +514,7 @@ class ETLTransform:
         summary = DataQualitySummary(
             total_input_rows=len(raw_df),
             total_output_rows=len(cleaned_df),
-            areas_processed=cleaned_df['area'].nunique(),
+            areas_processed=cleaned_df['area_academica'].nunique() if 'area_academica' in cleaned_df.columns else 0,
         )
         
         # Check 1: NULL score coverage
@@ -521,7 +537,8 @@ class ETLTransform:
                 logger.error(f"Data quality: {msg}")
         
         # Check 3: Critical column NULL coverage
-        critical_cols = ['id_ie', 'id_seccion', 'year', 'area']
+        # Note: 'area' now = geographic zone (Rural/Urban), 'area_academica' = academic area
+        critical_cols = ['id_ie', 'id_seccion', 'year', 'area_academica', 'cor_est']
         for col in critical_cols:
             if col in cleaned_df.columns:
                 null_pct = round(
@@ -539,11 +556,16 @@ class ETLTransform:
                     summary.errors.append(msg)
                     logger.error(msg)
         
+        # Check 3b: Geographic zone (area) distribution - informational
+        if 'area' in cleaned_df.columns:
+            area_dist = cleaned_df['area'].value_counts().to_dict()
+            logger.info(f"Data quality: Geographic zone distribution | {area_dist}")
+        
         # Check 4: Row count consistency
         expected_rows = len(raw_df) * len(AREA_COLUMN_MAP)
         if len(cleaned_df) != expected_rows:
             msg = (f"Row count mismatch: expected {expected_rows} "
-                   f"(input: {len(raw_df)} × {len(AREA_COLUMN_MAP)} areas), "
+                   f"(input: {len(raw_df)} × {len(AREA_COLUMN_MAP)} academic areas), "
                    f"got {len(cleaned_df)}")
             summary.warnings.append(msg)
             logger.warning(msg)

@@ -33,11 +33,15 @@ class ENLAIngestor:
     6. Log audit trail
     """
     
+    # Corrected schema: EMA 2023 columns + single cor_est (student ID)
+    # NOTE: "area" column = geographic zone (Rural/Urban), NOT academic area
     REQUIRED_COLUMNS = {
         'id_ie', 'id_seccion', 'nom_ie', 'nom_dre',
         'ano_evaluacion', 'grado_evaluacion',
-        'cor_est_comunicacion', 'cor_est_matematica',
-        'cor_est_ccss', 'cor_est_cyt'
+        'cor_est', 'area',  # cor_est = student ID, area = geographic zone
+        'M500_EM_2S_2023_CT', 'M500_EM_2S_2023_MA', 'M500_EM_2S_2023_CS',
+        'grupo_EM_2S_2023_CT', 'grupo_EM_2S_2023_MA', 'grupo_EM_2S_2023_CS',
+        'peso_CT', 'peso_MA', 'peso_CS'
     }
     
     UPSERT_KEY = ['id_ie', 'id_seccion', 'ano_evaluacion']

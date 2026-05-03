@@ -7,7 +7,7 @@ from typing import List
 
 # ==========================================
 # fact_enla schema
-# Core fact table: one row per institution per area per year
+# Core fact table: one row per student per academic area per year
 # ==========================================
 FACT_ENLA_SCHEMA: List[SchemaField] = [
     SchemaField("fact_id", "STRING", mode="REQUIRED", description="Unique UUID for this fact record"),
@@ -15,7 +15,8 @@ FACT_ENLA_SCHEMA: List[SchemaField] = [
     SchemaField("id_seccion", "STRING", mode="REQUIRED", description="Section ID"),
     SchemaField("nom_ie", "STRING", mode="NULLABLE", description="Institution name"),
     SchemaField("year", "INTEGER", mode="REQUIRED", description="Evaluation year"),
-    SchemaField("area", "STRING", mode="REQUIRED", description="Subject area: comunicacion, matematica, ccss, cyt"),
+    SchemaField("area_academica", "STRING", mode="REQUIRED", description="Academic area: comunicacion, matematica, ccss (from EMA 2023)"),
+    SchemaField("cor_est", "STRING", mode="REQUIRED", description="Student identifier"),
     SchemaField("score", "FLOAT64", mode="NULLABLE", description="Student score [0, 100], NULL if not available"),
     SchemaField("created_at", "TIMESTAMP", mode="REQUIRED", description="Record creation timestamp"),
 ]
@@ -24,6 +25,7 @@ FACT_ENLA_SCHEMA: List[SchemaField] = [
 # ==========================================
 # enla_callao_cleaned schema
 # Cleaned staging table for ML feature engineering
+# NOTE: "area" = geographic zone (Rural/Urban), NOT academic area
 # ==========================================
 ENLA_CALLAO_CLEANED_SCHEMA: List[SchemaField] = [
     SchemaField("id_ie", "STRING", mode="REQUIRED", description="Institution ID"),
@@ -31,8 +33,12 @@ ENLA_CALLAO_CLEANED_SCHEMA: List[SchemaField] = [
     SchemaField("nom_ie", "STRING", mode="NULLABLE", description="Institution name"),
     SchemaField("nom_dre", "STRING", mode="NULLABLE", description="DRE (regional education directorate) name"),
     SchemaField("year", "INTEGER", mode="REQUIRED", description="Evaluation year"),
-    SchemaField("area", "STRING", mode="REQUIRED", description="Subject area"),
-    SchemaField("score", "FLOAT64", mode="NULLABLE", description="Corrected student score"),
+    SchemaField("area", "STRING", mode="REQUIRED", description="Geographic zone: Rural or Urban"),
+    SchemaField("cor_est", "STRING", mode="REQUIRED", description="Student identifier"),
+    SchemaField("area_academica", "STRING", mode="REQUIRED", description="Academic area: comunicacion, matematica, ccss (from EMA 2023)"),
+    SchemaField("score", "FLOAT64", mode="NULLABLE", description="Student score [0, 100], NULL if not available"),
+    SchemaField("grupo", "STRING", mode="NULLABLE", description="Performance group (from EMA 2023 grupo column)"),
+    SchemaField("peso", "FLOAT64", mode="NULLABLE", description="Weight factor (from EMA 2023 peso column)"),
     SchemaField("is_null_score", "BOOLEAN", mode="REQUIRED", description="Flag indicating if score was NULL"),
     SchemaField("created_at", "TIMESTAMP", mode="REQUIRED", description="Record creation timestamp"),
 ]
@@ -40,14 +46,14 @@ ENLA_CALLAO_CLEANED_SCHEMA: List[SchemaField] = [
 
 # ==========================================
 # dim_meta schema
-# Institution metadata with performance targets per area per year
+# Institution metadata with performance targets per academic area per year
 # ==========================================
 DIM_META_SCHEMA: List[SchemaField] = [
     SchemaField("meta_id", "STRING", mode="REQUIRED", description="Unique UUID for this meta record"),
     SchemaField("id_ie", "STRING", mode="REQUIRED", description="Institution ID"),
     SchemaField("nom_ie", "STRING", mode="NULLABLE", description="Institution name"),
     SchemaField("year", "INTEGER", mode="REQUIRED", description="Target year"),
-    SchemaField("area", "STRING", mode="REQUIRED", description="Subject area"),
+    SchemaField("area", "STRING", mode="REQUIRED", description="Academic area: comunicacion, matematica, ccss"),
     SchemaField("target_score", "FLOAT64", mode="REQUIRED", description="Target score threshold (default 60.0)"),
     SchemaField("region", "STRING", mode="REQUIRED", description="Region name (CALLAO)"),
     SchemaField("created_at", "TIMESTAMP", mode="REQUIRED", description="Record creation timestamp"),

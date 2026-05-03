@@ -30,7 +30,7 @@ from src.etl.schemas import FACT_ENLA_SCHEMA, ENLA_CALLAO_CLEANED_SCHEMA
 
 @pytest.fixture
 def sample_raw_df() -> pd.DataFrame:
-    """Create a sample raw DataFrame mimicking MongoDB output."""
+    """Create a sample raw DataFrame mimicking MongoDB output with corrected schema."""
     return pd.DataFrame({
         '_id': ['obj1', 'obj2', 'obj3'],
         'id_ie': ['IE001', 'IE002', 'IE003'],
@@ -39,16 +39,24 @@ def sample_raw_df() -> pd.DataFrame:
         'nom_dre': ['CALLAO', 'CALLAO', 'CALLAO'],
         'ano_evaluacion': [2021, 2022, 2023],
         'grado_evaluacion': [2, 2, 2],
-        'cor_est_comunicacion': [72.5, 65.0, 80.0],
-        'cor_est_matematica': [58.3, 71.2, None],
-        'cor_est_ccss': [None, 69.5, 75.0],
-        'cor_est_cyt': [63.0, 55.0, 82.5],
+        'cor_est': ['EST001', 'EST002', 'EST003'],  # Student identifier (single column)
+        'area': ['Urban', 'Urban', 'Rural'],  # Geographic zone (NOT academic area)
+        # EMA 2023 columns (3 academic areas, no 'cyt' data)
+        'M500_EM_2S_2023_CT': [72.5, 65.0, 80.0],   # Comunicación/Lectura
+        'grupo_EM_2S_2023_CT': ['2', '3', '1'],
+        'peso_CT': [1.0, 1.0, 1.0],
+        'M500_EM_2S_2023_MA': [58.3, 71.2, None],    # Matemática
+        'grupo_EM_2S_2023_MA': ['3', '2', None],
+        'peso_MA': [1.0, 1.0, None],
+        'M500_EM_2S_2023_CS': [None, 69.5, 75.0],    # Ciencias Sociales
+        'grupo_EM_2S_2023_CS': [None, '2', '2'],
+        'peso_CS': [None, 1.0, 1.0],
     })
 
 
 @pytest.fixture
 def sample_raw_with_all_nulls() -> pd.DataFrame:
-    """Create a DataFrame with all NULL scores."""
+    """Create a DataFrame with all NULL EMA 2023 scores."""
     return pd.DataFrame({
         '_id': ['obj1'],
         'id_ie': ['IE001'],
@@ -57,10 +65,18 @@ def sample_raw_with_all_nulls() -> pd.DataFrame:
         'nom_dre': ['CALLAO'],
         'ano_evaluacion': [2021],
         'grado_evaluacion': [2],
-        'cor_est_comunicacion': [None],
-        'cor_est_matematica': [None],
-        'cor_est_ccss': [None],
-        'cor_est_cyt': [None],
+        'cor_est': ['EST001'],
+        'area': ['Urban'],
+        # All EMA 2023 score columns are NULL
+        'M500_EM_2S_2023_CT': [None],
+        'grupo_EM_2S_2023_CT': [None],
+        'peso_CT': [None],
+        'M500_EM_2S_2023_MA': [None],
+        'grupo_EM_2S_2023_MA': [None],
+        'peso_MA': [None],
+        'M500_EM_2S_2023_CS': [None],
+        'grupo_EM_2S_2023_CS': [None],
+        'peso_CS': [None],
     })
 
 
@@ -89,65 +105,82 @@ def mock_etl_transform() -> ETLTransform:
 # ==========================================
 
 class TestPivotByArea:
-    """Tests for wide-to-long format transformation."""
+    """Tests for wide-to-long format transformation (corrected schema)."""
     
     def test_pivot_creates_correct_row_count(self, mock_etl_transform: ETLTransform,
                                              sample_raw_df: pd.DataFrame):
-        """Verify that output has input_rows × num_areas rows."""
+        """Verify that output has input_rows × num_areas rows (3 academic areas)."""
         result = mock_etl_transform._transform_to_long_format(sample_raw_df)
         expected_rows = len(sample_raw_df) * len(AREA_COLUMN_MAP)
         
         assert len(result) == expected_rows, \
-            f"Expected {expected_rows} rows, got {len(result)}"
+            f"Expected {expected_rows} rows (3 areas × {len(sample_raw_df)} students), got {len(result)}"
     
     def test_pivot_contains_all_areas(self, mock_etl_transform: ETLTransform,
                                       sample_raw_df: pd.DataFrame):
-        """Verify that all 4 areas are present in output."""
+        """Verify that all 3 academic areas are present (no 'cyt' data)."""
         result = mock_etl_transform._transform_to_long_format(sample_raw_df)
-        expected_areas = set(AREA_COLUMN_MAP.values())
-        actual_areas = set(result['area'].unique())
+        expected_areas = set(AREA_COLUMN_MAP.values())  # comunicacion, matematica, ccss
+        actual_areas = set(result['area_academica'].unique())
         
         assert actual_areas == expected_areas, \
             f"Missing areas: {expected_areas - actual_areas}"
+        # Verify 'cyt' is NOT present
+        assert 'cyt' not in actual_areas, "cyt should not be present (no data)"
     
-    def test_pivot_preserves_institution_ids(self, mock_etl_transform: ETLTransform,
-                                             sample_raw_df: pd.DataFrame):
-        """Verify that institution IDs are correctly replicated across areas."""
+    def test_pivot_preserves_institution_and_student_ids(self, mock_etl_transform: ETLTransform,
+                                                          sample_raw_df: pd.DataFrame):
+        """Verify that institution IDs and student IDs (cor_est) are correctly replicated."""
         result = mock_etl_transform._transform_to_long_format(sample_raw_df)
         
-        # Each institution should appear once per area
-        ie_counts = result.groupby('id_ie').size()
-        expected_count_per_ie = len(AREA_COLUMN_MAP)
+        # Each student should appear once per academic area
+        ie_counts = result.groupby(['id_ie', 'cor_est']).size()
+        expected_count_per_student = len(AREA_COLUMN_MAP)
         
-        assert all(count == expected_count_per_ie for count in ie_counts), \
-            "Not all institutions appear in all areas"
+        assert all(count == expected_count_per_student for count in ie_counts), \
+            "Not all students appear in all academic areas"
     
     def test_pivot_maps_correct_scores(self, mock_etl_transform: ETLTransform,
                                        sample_raw_df: pd.DataFrame):
-        """Verify that scores are mapped to the correct area."""
+        """Verify that EMA 2023 scores are mapped to the correct academic area."""
         result = mock_etl_transform._transform_to_long_format(sample_raw_df)
         
-        # Check first institution's communication score
-        ie001_com = result[
-            (result['id_ie'] == 'IE001') & (result['area'] == 'comunicacion')
+        # Check first student's comunicacion score (from M500_EM_2S_2023_CT)
+        est001_com = result[
+            (result['cor_est'] == 'EST001') & (result['area_academica'] == 'comunicacion')
         ]
-        assert len(ie001_com) == 1
-        assert ie001_com.iloc[0]['score'] == 72.5
+        assert len(est001_com) == 1
+        assert est001_com.iloc[0]['score'] == 72.5
         
-        # Check first institution's math score
-        ie001_mat = result[
-            (result['id_ie'] == 'IE001') & (result['area'] == 'matematica')
+        # Check first student's math score (from M500_EM_2S_2023_MA)
+        est001_mat = result[
+            (result['cor_est'] == 'EST001') & (result['area_academica'] == 'matematica')
         ]
-        assert len(ie001_mat) == 1
-        assert ie001_mat.iloc[0]['score'] == 58.3
+        assert len(est001_mat) == 1
+        assert est001_mat.iloc[0]['score'] == 58.3
+    
+    def test_pivot_preserves_geographic_area(self, mock_etl_transform: ETLTransform,
+                                             sample_raw_df: pd.DataFrame):
+        """Verify that 'area' column (geographic zone) is preserved correctly."""
+        result = mock_etl_transform._transform_to_long_format(sample_raw_df)
+        
+        # Check that geographic zone is replicated for each academic area
+        est001_rows = result[result['cor_est'] == 'EST001']
+        # All rows for EST001 should have 'Urban' as geographic zone
+        assert all(est001_rows['area'] == 'Urban'), \
+            "Geographic zone (area) not preserved correctly"
     
     def test_pivot_output_columns(self, mock_etl_transform: ETLTransform,
                                   sample_raw_df: pd.DataFrame):
-        """Verify output DataFrame has expected columns."""
+        """Verify output DataFrame has expected columns (corrected schema)."""
         result = mock_etl_transform._transform_to_long_format(sample_raw_df)
         expected_cols = {
             'id_ie', 'id_seccion', 'nom_ie', 'nom_dre',
-            'year', 'area', 'score', 'is_null_score', 'created_at'
+            'year', 'area',  # Geographic zone (Rural/Urban)
+            'cor_est',  # Student identifier
+            'area_academica',  # Academic area (comunicacion/matematica/ccss)
+            'score', 'grupo', 'peso',
+            'is_null_score', 'created_at'
         }
         
         assert set(result.columns) == expected_cols, \
@@ -159,7 +192,7 @@ class TestPivotByArea:
 # ==========================================
 
 class TestCreateFactRecords:
-    """Tests for fact_enla table creation."""
+    """Tests for fact_enla table creation (corrected schema)."""
     
     def test_fact_records_have_uuid(self, mock_etl_transform: ETLTransform,
                                     sample_raw_df: pd.DataFrame):
@@ -182,12 +215,12 @@ class TestCreateFactRecords:
     
     def test_fact_records_schema(self, mock_etl_transform: ETLTransform,
                                  sample_raw_df: pd.DataFrame):
-        """Verify fact DataFrame matches expected schema."""
+        """Verify fact DataFrame matches expected schema (area_academica + cor_est)."""
         cleaned = mock_etl_transform._transform_to_long_format(sample_raw_df)
         fact_df = mock_etl_transform._create_fact_records(cleaned)
         
         expected_cols = {'fact_id', 'id_ie', 'id_seccion', 'nom_ie',
-                        'year', 'area', 'score', 'created_at'}
+                        'year', 'area_academica', 'cor_est', 'score', 'created_at'}
         
         assert set(fact_df.columns) == expected_cols
     
@@ -199,6 +232,19 @@ class TestCreateFactRecords:
         
         # All values should be integers
         assert fact_df['year'].dtype in [np.int64, np.int32, int]
+    
+    def test_fact_contains_student_id(self, mock_etl_transform: ETLTransform,
+                                       sample_raw_df: pd.DataFrame):
+        """Verify cor_est (student ID) is correctly populated."""
+        cleaned = mock_etl_transform._transform_to_long_format(sample_raw_df)
+        fact_df = mock_etl_transform._create_fact_records(cleaned)
+        
+        # All rows should have non-null cor_est
+        assert fact_df['cor_est'].notna().all(), "Student ID (cor_est) should not be NULL"
+        # Check specific values
+        est001_rows = fact_df[fact_df['cor_est'] == 'EST001']
+        assert len(est001_rows) == len(AREA_COLUMN_MAP), \
+            "Each student should have one row per academic area"
 
 
 # ==========================================
@@ -206,30 +252,32 @@ class TestCreateFactRecords:
 # ==========================================
 
 class TestNullHandling:
-    """Tests for NULL score handling."""
+    """Tests for NULL score handling (corrected schema)."""
     
     def test_null_scores_marked_correctly(self, mock_etl_transform: ETLTransform,
-                                          sample_raw_df: pd.DataFrame):
+                                           sample_raw_df: pd.DataFrame):
         """Verify that NULL scores are flagged with is_null_score=True."""
         result = mock_etl_transform._transform_to_long_format(sample_raw_df)
         
-        # IE003 has NULL matematica score
-        ie003_mat = result[
-            (result['id_ie'] == 'IE003') & (result['area'] == 'matematica')
+        # EST003 has NULL matematica score (M500_EM_2S_2023_MA is None)
+        est003_mat = result[
+            (result['cor_est'] == 'EST003') & (result['area_academica'] == 'matematica')
         ]
-        assert ie003_mat.iloc[0]['is_null_score'] == True
-        assert pd.isna(ie003_mat.iloc[0]['score'])
+        assert len(est003_mat) == 1
+        assert est003_mat.iloc[0]['is_null_score'] == True
+        assert pd.isna(est003_mat.iloc[0]['score'])
         
-        # IE001 has valid matematica score
-        ie001_mat = result[
-            (result['id_ie'] == 'IE001') & (result['area'] == 'matematica')
+        # EST001 has valid matematica score
+        est001_mat = result[
+            (result['cor_est'] == 'EST001') & (result['area_academica'] == 'matematica')
         ]
-        assert ie001_mat.iloc[0]['is_null_score'] == False
-        assert not pd.isna(ie001_mat.iloc[0]['score'])
+        assert len(est001_mat) == 1
+        assert est001_mat.iloc[0]['is_null_score'] == False
+        assert not pd.isna(est001_mat.iloc[0]['score'])
     
     def test_all_null_scores(self, mock_etl_transform: ETLTransform,
-                             sample_raw_with_all_nulls: pd.DataFrame):
-        """Verify that all-NULL scores are handled gracefully."""
+                              sample_raw_with_all_nulls: pd.DataFrame):
+        """Verify that all-NULL EMA 2023 scores are handled gracefully."""
         result = mock_etl_transform._transform_to_long_format(
             sample_raw_with_all_nulls
         )
@@ -243,20 +291,25 @@ class TestNullHandling:
         """Verify that rows with NULL scores are NOT filtered out."""
         result = mock_etl_transform._transform_to_long_format(sample_raw_df)
         
-        # IE001 has NULL ccss, should still be in output
-        ie001_ccss = result[
-            (result['id_ie'] == 'IE001') & (result['area'] == 'ccss')
+        # EST002 has NULL ccss score (M500_EM_2S_2023_CS is None)
+        est002_ccss = result[
+            (result['cor_est'] == 'EST002') & (result['area_academica'] == 'ccss')
         ]
-        assert len(ie001_ccss) == 1
-        assert ie001_ccss.iloc[0]['is_null_score'] == True
+        assert len(est002_ccss) == 1
+        assert est002_ccss.iloc[0]['is_null_score'] == True
     
     def test_null_score_count_accuracy(self, mock_etl_transform: ETLTransform,
-                                       sample_raw_df: pd.DataFrame):
+                                        sample_raw_df: pd.DataFrame):
         """Verify NULL score count is accurate."""
         result = mock_etl_transform._transform_to_long_format(sample_raw_df)
         actual_nulls = result['is_null_score'].sum()
         
-        # sample_raw_df has: IE003-matematica=None, IE001-ccss=None
+        # sample_raw_df has: EST003-MA=None (1), EST002-CS=None (1), EST001-CS=None (1)
+        # Wait, looking at the fixture: 
+        # EST001: CT=72.5, MA=58.3, CS=None (1 null)
+        # EST002: CT=65.0, MA=71.2, CS=69.5 (0 nulls)
+        # EST003: CT=80.0, MA=None, CS=75.0 (1 null)
+        # Total: 2 nulls
         expected_nulls = 2
         
         assert actual_nulls == expected_nulls, \
@@ -268,10 +321,10 @@ class TestNullHandling:
 # ==========================================
 
 class TestDataQualityCheck:
-    """Tests for data quality gate validation."""
+    """Tests for data quality gate validation (corrected schema)."""
     
     def test_quality_check_passes_valid_data(self, mock_etl_transform: ETLTransform,
-                                             sample_raw_df: pd.DataFrame):
+                                               sample_raw_df: pd.DataFrame):
         """Verify that valid data passes quality checks."""
         cleaned = mock_etl_transform._transform_to_long_format(sample_raw_df)
         summary = mock_etl_transform._validate_data_quality(sample_raw_df, cleaned)
@@ -300,7 +353,9 @@ class TestDataQualityCheck:
             'id_ie': ['IE001'],
             'id_seccion': ['SEC001'],
             'year': [2021],
-            'area': ['comunicacion'],
+            'area': ['Urban'],  # Geographic zone
+            'cor_est': ['EST001'],  # Student ID
+            'area_academica': ['comunicacion'],
             'score': [150.0],  # Out of range!
             'is_null_score': [False],
             'created_at': [datetime.now(timezone.utc)],
@@ -318,12 +373,14 @@ class TestDataQualityCheck:
             'ano_evaluacion': [2021] * 20,
         })
         
-        # Make 10% of id_ie NULL
+        # Make 10% of cor_est NULL (student ID is critical)
         cleaned_df = pd.DataFrame({
-            'id_ie': [None] * 2 + ['IE001'] * 18,
+            'id_ie': ['IE001'] * 20,
             'id_seccion': ['SEC001'] * 20,
             'year': [2021] * 20,
-            'area': ['comunicacion'] * 20,
+            'area': ['Urban'] * 20,
+            'cor_est': [None] * 2 + ['EST001'] * 18,  # 10% NULL
+            'area_academica': ['comunicacion'] * 20,
             'score': [60.0] * 20,
             'is_null_score': [False] * 20,
             'created_at': [datetime.now(timezone.utc)] * 20,
@@ -332,7 +389,7 @@ class TestDataQualityCheck:
         summary = mock_etl_transform._validate_data_quality(raw_df, cleaned_df)
         
         # 10% NULL coverage should generate a warning
-        assert summary.critical_null_coverage.get('id_ie', 0) == 10.0
+        assert summary.critical_null_coverage.get('cor_est', 0) == 10.0
     
     def test_quality_summary_initial_values(self):
         """Verify DataQualitySummary defaults."""
@@ -346,12 +403,60 @@ class TestDataQualityCheck:
         assert summary.is_valid == True  # No errors initially
     
     def test_quality_check_tracks_areas_processed(self, mock_etl_transform: ETLTransform,
-                                                   sample_raw_df: pd.DataFrame):
-        """Verify that areas processed count is accurate."""
+                                                    sample_raw_df: pd.DataFrame):
+        """Verify that academic areas processed count is accurate."""
         cleaned = mock_etl_transform._transform_to_long_format(sample_raw_df)
         summary = mock_etl_transform._validate_data_quality(sample_raw_df, cleaned)
         
+        # Should be 3 (comunicacion, matematica, ccss - no 'cyt')
         assert summary.areas_processed == len(AREA_COLUMN_MAP)
+
+
+# ==========================================
+# Test: ETLResult
+# ==========================================
+
+class TestETLResult:
+    """Tests for ETLResult dataclass."""
+    
+    def test_etl_result_has_status_property_success(self):
+        """Verify ETLResult.status returns 'success' when success=True."""
+        from src.etl.transform import DataQualitySummary
+        
+        result = ETLResult(
+            success=True,
+            data_quality=DataQualitySummary(),
+        )
+        
+        assert result.status == 'success'
+    
+    def test_etl_result_has_status_property_failure(self):
+        """Verify ETLResult.status returns 'failed' when success=False."""
+        from src.etl.transform import DataQualitySummary
+        
+        result = ETLResult(
+            success=False,
+            data_quality=DataQualitySummary(),
+            error_message="Test error"
+        )
+        
+        assert result.status == 'failed'
+    
+    def test_etl_result_status_property_not_mutable(self):
+        """Verify status is a property (derived from success), not a settable attribute."""
+        from src.etl.transform import DataQualitySummary
+        
+        result = ETLResult(
+            success=True,
+            data_quality=DataQualitySummary(),
+        )
+        
+        # Status should be derived from success
+        assert result.status == 'success'
+        
+        # Changing success should change status
+        result.success = False
+        assert result.status == 'failed'
 
 
 # ==========================================
@@ -359,21 +464,21 @@ class TestDataQualityCheck:
 # ==========================================
 
 class TestDimensionTables:
-    """Tests for dimension table creation."""
+    """Tests for dimension table creation (corrected schema)."""
     
     def test_dim_meta_has_unique_combinations(self, mock_etl_transform: ETLTransform,
-                                              sample_raw_df: pd.DataFrame):
-        """Verify dim_meta has unique institution-area-year combos."""
+                                                sample_raw_df: pd.DataFrame):
+        """Verify dim_meta has unique institution-academic_area-year combos."""
         cleaned = mock_etl_transform._transform_to_long_format(sample_raw_df)
         dim_meta = mock_etl_transform._create_dim_meta(cleaned)
         
-        # Check no duplicates
+        # Check no duplicates (area in dim_meta = academic area)
         combo_col = ['id_ie', 'year', 'area']
         duplicates = dim_meta.duplicated(subset=combo_col)
         assert duplicates.sum() == 0, "Found duplicate combinations in dim_meta"
     
     def test_dim_meta_has_target_score(self, mock_etl_transform: ETLTransform,
-                                       sample_raw_df: pd.DataFrame):
+                                        sample_raw_df: pd.DataFrame):
         """Verify dim_meta has correct target score."""
         cleaned = mock_etl_transform._transform_to_long_format(sample_raw_df)
         dim_meta = mock_etl_transform._create_dim_meta(cleaned)
@@ -389,8 +494,21 @@ class TestDimensionTables:
         
         assert all(dim_meta['region'] == 'CALLAO')
     
+    def test_dim_meta_uses_academic_area(self, mock_etl_transform: ETLTransform,
+                                           sample_raw_df: pd.DataFrame):
+        """Verify dim_meta uses academic area (not geographic zone)."""
+        cleaned = mock_etl_transform._transform_to_long_format(sample_raw_df)
+        dim_meta = mock_etl_transform._create_dim_meta(cleaned)
+        
+        # dim_meta['area'] should have academic areas (comunicacion, matematica, ccss)
+        # NOT geographic zones (Urban/Rural)
+        expected_areas = set(AREA_COLUMN_MAP.values())
+        actual_areas = set(dim_meta['area'].unique())
+        assert actual_areas == expected_areas, \
+            f"dim_meta should use academic areas, got: {actual_areas}"
+    
     def test_dim_calendario_has_correct_years(self, mock_etl_transform: ETLTransform,
-                                              sample_raw_df: pd.DataFrame):
+                                                sample_raw_df: pd.DataFrame):
         """Verify dim_calendario covers all years in data."""
         dim_cal = mock_etl_transform._create_dim_calendario(sample_raw_df)
         
