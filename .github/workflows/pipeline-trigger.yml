@@ -1,5 +1,14 @@
 name: Trigger Full Pipeline
 
+# ONE-CLICK DEPLOYMENT: This workflow runs the complete pipeline:
+# 1. Python ETL (creates enla_callao_raw, fact_enla)
+# 2. Feature Engineering (creates enla_callao_features)
+# 3. ML Models (creates enla_callao_predictions_2026)
+# 4. dbt (creates views on top of the above tables)
+#
+# After this workflow completes, all tables and views will be ready.
+# No need to run dbt.yml separately!
+
 on:
   workflow_dispatch:
     inputs:
@@ -114,3 +123,47 @@ jobs:
         env:
           # Pass critical secrets at step level too
           MONGODB_URI: ${{ secrets.MONGODB_URI }}
+
+      - name: Install dbt
+        run: pip install dbt-bigquery==1.5.0
+
+      - name: Configure dbt profile
+        run: |
+          mkdir -p ~/.dbt
+          cat > ~/.dbt/profiles.yml << EOF
+enla_callao:
+  target: prod
+  outputs:
+    prod:
+      type: bigquery
+      method: oauth
+      project: ${BQ_PROJECT:-enla-2026-callao}
+      dataset: ${DBT_DATASET_ID:-BI_ENLA}
+      threads: 4
+      timeout_seconds: 300
+      location: southamerica-east1
+EOF
+          echo "dbt profile configured with project: ${BQ_PROJECT:-enla-2026-callao}"
+        env:
+          BQ_PROJECT: ${{ vars.BQ_PROJECT || 'enla-2026-callao' }}
+          DBT_DATASET_ID: "BI_ENLA"
+
+      - name: Create BigQuery dataset if not exists
+        run: |
+          bq mk --dataset --location=southamerica-east1 ${{ vars.BQ_PROJECT || 'enla-2026-callao' }}:BI_ENLA || echo "Dataset already exists or creation skipped"
+        env:
+          GCP_SA_KEY: ${{ secrets.GCP_SA_KEY }}
+
+      - name: Run dbt models
+        working-directory: dbt
+        env:
+          BQ_PROJECT: ${{ vars.BQ_PROJECT || 'enla-2026-callao' }}
+          DBT_DATASET_ID: "BI_ENLA"
+        run: |
+          echo "=== Running dbt after Python pipeline ==="
+          echo "BQ_PROJECT: $BQ_PROJECT"
+          dbt deps
+          dbt debug
+          dbt run
+          dbt test
+          echo "✅ dbt models deployed successfully!"
