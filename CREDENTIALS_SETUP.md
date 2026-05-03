@@ -559,6 +559,46 @@ Este error indica que la cuenta de servicio no tiene los permisos necesarios:
    - `Service Usage Admin` (habilitar APIs)
    - `Storage Admin` (acceder a código fuente en Cloud Storage)
 
+### Error 403: "Read access to project denied: please check billing account"
+Este es un error común durante el despliegue de Cloud Functions con GitHub Actions:
+```
+ERROR: (gcloud.functions.deploy) ResponseError: status=[403], code=[], 
+message=[Read access to project '***' was denied: please check billing account associated and retry]
+```
+
+**Causa raíz**: La cuenta de servicio no tiene permisos básicos de lectura Y/O la cuenta de facturación (billing) no está configurada correctamente.
+
+**Solución - PASOS REQUERIDOS (debes hacerlos manualmente en GCP Console)**:
+
+#### a. VERIFICAR CUENTA DE FACTURACIÓN (CAUSA MÁS COMÚN):
+1. Ve a: https://console.cloud.google.com/billing/linked?project=318247247954
+2. Asegúrate de que una cuenta de facturación válida y activa esté vinculada al proyecto 318247247954
+3. Verifica que la cuenta tenga fondos disponibles (no cerrada, no agotada)
+4. Si no existe cuenta de facturación, crea una (requiere tarjeta de crédito, pero tiene $300 USD de crédito gratuito)
+
+#### b. OTORGAR PERMISOS DE LECTURA A LA CUENTA DE SERVICIO (CRÍTICO PARA 403):
+1. Ve a: https://console.cloud.google.com/iam-admin/iam?project=318247247954
+2. Busca la cuenta de servicio (del secret GCP_SA_KEY, termina con @appspot.gserviceaccount.com)
+3. Haz clic en el ícono de lápiz para editar roles
+4. AGREGA el rol: **"Viewer" (roles/viewer)** - Rol de Visualizador Básico para acceso de lectura al proyecto
+5. MANTIÉN los roles existentes: cloudfunctions.developer, iam.serviceAccountUser, serviceusage.serviceUsageAdmin
+6. Haz clic en "GUARDAR"
+7. **NOTA IMPORTANTE**: ¡La cuenta de servicio DEBE tener roles/viewer para leer metadatos del proyecto durante el despliegue!
+
+#### c. HABILITAR CLOUD BILLING API (si no está habilitado):
+1. Ve a: https://console.cloud.google.com/apis/library/cloudbilling.googleapis.com?project=318247247954
+2. Haz clic en "HABILITAR"
+3. Este API es necesario para verificar el estado de facturación
+
+#### d. VERIFICAR QUE TODOS LOS APIS REQUERIDOS ESTÉN HABILITADOS:
+- Cloud Resource Manager API (cloudresourcemanager.googleapis.com)
+- Cloud Functions API (cloudfunctions.googleapis.com)
+- **Cloud Billing API (cloudbilling.googleapis.com)** ← NUEVO: Agregado al workflow
+- Compute Engine API (compute.googleapis.com)
+- Artifact Registry API (artifactregistry.googleapis.com)
+
+**Diagnóstico rápido**: El paso "Verify GCP project access" en el workflow mostrará si la cuenta de servicio puede leer metadatos del proyecto. Si falla, completa los pasos (a) y (b) anteriores.
+
 ---
 
 ## Resumen de Variables de Entorno

@@ -40,19 +40,30 @@ jobs:
           [ -z "$GCP_PROJECT_NUMBER" ] && echo "GCP_PROJECT_NUMBER is EMPTY" || echo "GCP_PROJECT_NUMBER is SET"
       
       # CRITICAL: Enable required GCP APIs before deployment
-      # NOTE TO USER: The service account (from GCP_SA_KEY secret) needs the role
-      # "roles/serviceusage.serviceUsageAdmin" to enable APIs. If this step fails,
-      # you must manually enable the APIs via the GCP Console first:
-      # https://console.developers.google.com/apis/api/cloudresourcemanager.googleapis.com/overview?project=318247247954
-      - name: Enable required GCP APIs
-        run: |
-          echo "Enabling required GCP APIs for Cloud Function deployment..."
-          gcloud services enable cloudresourcemanager.googleapis.com \
-            cloudfunctions.googleapis.com \
-            compute.googleapis.com \
-            artifactregistry.googleapis.com \
-            --project=${{ secrets.GCP_PROJECT_ID || 'enla-2026-callao' }}
-        continue-on-error: true  # Don't fail if APIs are already enabled or permissions are insufficient
+       # NOTE TO USER: The service account (from GCP_SA_KEY secret) needs the role
+       # "roles/serviceusage.serviceUsageAdmin" to enable APIs. If this step fails,
+       # you must manually enable the APIs via the GCP Console first:
+       # https://console.developers.google.com/apis/api/cloudresourcemanager.googleapis.com/overview?project=318247247954
+       - name: Enable required GCP APIs
+         run: |
+           echo "Enabling required GCP APIs for Cloud Function deployment..."
+           gcloud services enable cloudresourcemanager.googleapis.com \
+             cloudfunctions.googleapis.com \
+             compute.googleapis.com \
+             artifactregistry.googleapis.com \
+             cloudbilling.googleapis.com \
+             --project=${{ secrets.GCP_PROJECT_ID || 'enla-2026-callao' }}
+         continue-on-error: true  # Don't fail if APIs are already enabled or permissions are insufficient
+
+       # OPTIONAL: Verify GCP project access (for debugging 403 errors)
+       # This step helps diagnose "Read access denied" errors
+       - name: Verify GCP project access
+         run: |
+           echo "Verifying GCP project access..."
+           gcloud projects describe ${{ env.GCP_PROJECT_NUMBER || '318247247954' }} || echo "WARNING: Project access check failed - this may indicate billing or permission issues"
+         continue-on-error: true
+         env:
+           GCP_PROJECT_NUMBER: ${{ secrets.GCP_PROJECT_NUMBER || '318247247954' }}
       
       - name: Deploy Cloud Function
         run: |
@@ -91,4 +102,44 @@ jobs:
 #    - Cloud Functions API
 #    - Compute Engine API
 #    - Artifact Registry API
+#
+# =============================================================================
+# TROUBLESHOOTING: 403 BILLING/ACCESS DENIED ERROR
+# =============================================================================
+# If you get this error during deployment:
+# "Read access to project '***' was denied: please check billing account associated and retry"
+#
+# ROOT CAUSE: The service account lacks basic read permissions AND/OR the billing account is misconfigured.
+#
+# REQUIRED USER ACTIONS (GCP Console - cannot be automated):
+#
+# a. CHECK BILLING ACCOUNT (MOST COMMON CAUSE):
+#    - Go to: https://console.cloud.google.com/billing/linked?project=318247247954
+#    - Ensure a valid, active billing account is linked to project 318247247954
+#    - Verify the billing account has available funds (not closed, not exhausted)
+#    - If no billing account exists, create one (requires credit card, but has $300 free credit)
+#
+# b. GRANT READ ACCESS TO SERVICE ACCOUNT (CRITICAL FOR 403):
+#    - Go to: https://console.cloud.google.com/iam-admin/iam?project=318247247954
+#    - Find the service account (from GCP_SA_KEY secret, ends with @appspot.gserviceaccount.com)
+#    - Click the pencil icon to edit roles
+#    - ADD the role: "Viewer" (roles/viewer) - Basic Viewer role for project read access
+#    - KEEP existing roles: cloudfunctions.developer, iam.serviceAccountUser, serviceusage.serviceUsageAdmin
+#    - Click "SAVE"
+#    - NOTE: The service account MUST have roles/viewer to read project metadata during deployment!
+#
+# c. ENABLE CLOUD BILLING API (if not enabled):
+#    - Go to: https://console.cloud.google.com/apis/library/cloudbilling.googleapis.com?project=318247247954
+#    - Click "ENABLE"
+#    - This API is required to verify billing status
+#
+# d. VERIFY ALL REQUIRED APIs ARE ENABLED:
+#    - Cloud Resource Manager API (cloudresourcemanager.googleapis.com)
+#    - Cloud Functions API (cloudfunctions.googleapis.com)
+#    - Cloud Billing API (cloudbilling.googleapis.com)  <-- NEW: Added to workflow
+#    - Compute Engine API (compute.googleapis.com)
+#    - Artifact Registry API (artifactregistry.googleapis.com)
+#
+# QUICK DIAGNOSIS: The "Verify GCP project access" step in this workflow will show
+# if the service account can read project metadata. If it fails, complete steps (a) and (b) above.
 # =============================================================================
