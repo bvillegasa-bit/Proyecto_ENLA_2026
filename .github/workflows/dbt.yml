@@ -55,22 +55,24 @@ jobs:
       - name: Configure dbt profile
         run: |
           mkdir -p ~/.dbt
-          cat > ~/.dbt/profiles.yml << 'EOF'
-          enla_callao:
-            target: prod
-            outputs:
-              prod:
-                type: bigquery
-                method: oauth
-                project: ${{ secrets.GCP_PROJECT_ID || 'enla-2026-callao' }}
-                dataset: BI_ENLA
-                threads: 4
-                timeout_seconds: 300
-                location: southamerica-east1
-          EOF
+          cat > ~/.dbt/profiles.yml << EOF
+enla_callao:
+  target: prod
+  outputs:
+    prod:
+      type: bigquery
+      method: oauth
+      project: ${BQ_PROJECT:-enla-2026-callao}
+      dataset: ${DBT_DATASET_ID:-BI_ENLA}
+      threads: 4
+      timeout_seconds: 300
+      location: southamerica-east1
+EOF
+          echo "dbt profile configured with project: ${BQ_PROJECT:-enla-2026-callao}"
         env:
           # Ensure BQ_PROJECT is available for sources.yml env_var() calls
           BQ_PROJECT: ${{ secrets.GCP_PROJECT_ID || 'enla-2026-callao' }}
+          DBT_DATASET_ID: "BI_ENLA"
        
       - name: Create BigQuery dataset if not exists
         run: |
@@ -101,9 +103,24 @@ jobs:
         env:
           GCP_SA_KEY: ${{ secrets.GCP_SA_KEY }}
         
+      - name: Debug - Verify BQ_PROJECT before dbt run
+        run: |
+          echo "=== Verifying BQ_PROJECT environment variable ==="
+          if [ -z "$BQ_PROJECT" ]; then
+            echo "❌ ERROR: BQ_PROJECT is EMPTY - dbt will use default from sources.yml"
+            exit 1
+          else
+            echo "✅ BQ_PROJECT is SET: $BQ_PROJECT"
+          fi
+          echo "DBT_DATASET_ID: ${DBT_DATASET_ID:-NOT SET}"
+
       - name: Run dbt models
         working-directory: dbt
+        env:
+          BQ_PROJECT: ${{ secrets.GCP_PROJECT_ID || 'enla-2026-callao' }}
+          DBT_DATASET_ID: "BI_ENLA"
         run: |
+          echo "Running dbt with BQ_PROJECT=$BQ_PROJECT"
           dbt deps
           dbt run
           dbt test
