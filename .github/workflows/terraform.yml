@@ -12,12 +12,17 @@ permissions:
 jobs:
   terraform:
     runs-on: ubuntu-latest
-    if: secrets.GCP_SA_KEY != ''
+    env:
+      GCP_SA_KEY: ${{ secrets.GCP_SA_KEY }}
     defaults:
       run:
         working-directory: terraform
     
     steps:
+      - name: Check GCP credentials
+        if: ${{ env.GCP_SA_KEY != '' }}
+        run: echo "GCP credentials configured"
+      
       - uses: actions/checkout@v4
        
       - name: Set up Terraform
