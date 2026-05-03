@@ -9,6 +9,13 @@ on:
 jobs:
   test:
     runs-on: ubuntu-latest
+    # Environment variables at JOB level - available to ALL steps
+    env:
+      MONGODB_URI: ${{ secrets.MONGODB_URI }}
+      GCP_PROJECT_ID: ${{ secrets.GCP_PROJECT_ID }}
+      SENDGRID_API_KEY: ${{ secrets.SENDGRID_API_KEY }}
+      EMAIL_FROM: ${{ secrets.EMAIL_FROM }}
+      EMAIL_TO: ${{ secrets.EMAIL_TO }}
     
     steps:
       - uses: actions/checkout@v4
@@ -24,14 +31,14 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r requirements.txt
       
+      - name: Debug - Check env vars
+        run: |
+          echo "Checking environment variables..."
+          [ -z "$MONGODB_URI" ] && echo "MONGODB_URI is EMPTY" || echo "MONGODB_URI is SET"
+          [ -z "$SENDGRID_API_KEY" ] && echo "SENDGRID_API_KEY is EMPTY" || echo "SENDGRID_API_KEY is SET"
+          [ -z "$GCP_PROJECT_ID" ] && echo "GCP_PROJECT_ID is EMPTY" || echo "GCP_PROJECT_ID is SET"
+      
       - name: Run tests with coverage
-        # TODO: Mover credenciales a Secrets en GitHub - Settings → Secrets and variables → Actions → Secrets
-        env:
-          MONGODB_URI: ${{ secrets.MONGODB_URI || vars.MONGODB_URI }}
-          GCP_PROJECT_ID: ${{ secrets.GCP_PROJECT_ID || vars.GCP_PROJECT_ID || secrets.BQ_PROJECT || vars.BQ_PROJECT }}
-          SENDGRID_API_KEY: ${{ secrets.SENDGRID_API_KEY || vars.SENDGRID_API_KEY }}
-          EMAIL_FROM: ${{ secrets.EMAIL_FROM || vars.EMAIL_FROM || 'bernabevillegas013@gmail.com' }}
-          EMAIL_TO: ${{ secrets.EMAIL_TO || vars.EMAIL_TO || 'bvillegasa@ucvvirtual.edu.pe' }}
         run: |
           pytest tests/unit/ -v --cov=src --cov-report=xml --cov-report=term-missing
       

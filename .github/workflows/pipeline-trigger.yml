@@ -19,30 +19,40 @@ on:
 jobs:
   trigger:
     runs-on: ubuntu-latest
-    # TODO: MOVER CREDENCIALES A SECRETS - Settings → Secrets and variables → Actions → Secrets
-    # Las credenciales (MONGODB_URI, SENDGRID_API_KEY, GCP_SA_KEY) NO deben estar como Variables (visibles)
+    # Environment variables at JOB level - available to ALL steps
     env:
-      # Usar vars.* temporalmente - CAMBIAR A secrets.* después de mover a Secrets
-      GCP_SA_KEY: ${{ secrets.GCP_SA_KEY || vars.GCP_SA_KEY }}
-      BQ_PROJECT: ${{ secrets.BQ_PROJECT || vars.BQ_PROJECT || 'enla-2026-callao' }}
+      MONGODB_URI: ${{ secrets.MONGODB_URI }}
+      GCP_SA_KEY: ${{ secrets.GCP_SA_KEY }}
+      GCP_PROJECT_ID: ${{ secrets.GCP_PROJECT_ID }}
+      SENDGRID_API_KEY: ${{ secrets.SENDGRID_API_KEY }}
+      EMAIL_FROM: ${{ secrets.EMAIL_FROM }}
+      EMAIL_TO: ${{ secrets.EMAIL_TO }}
+      BQ_PROJECT: ${{ secrets.GCP_PROJECT_ID || 'enla-2026-callao' }}
     
     steps:
       - uses: actions/checkout@v4
-       
+        
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
           python-version: '3.11'
-       
+        
       - name: Install dependencies
         run: pip install -r requirements.txt
-       
+        
       - name: Authenticate to Google Cloud
         if: ${{ env.GCP_SA_KEY != '' }}
         uses: google-github-actions/auth@v2
         with:
           credentials_json: ${{ secrets.GCP_SA_KEY }}
-      
+       
+      - name: Debug - Check env vars
+        run: |
+          echo "Checking environment variables..."
+          [ -z "$MONGODB_URI" ] && echo "MONGODB_URI is EMPTY" || echo "MONGODB_URI is SET"
+          [ -z "$SENDGRID_API_KEY" ] && echo "SENDGRID_API_KEY is EMPTY" || echo "SENDGRID_API_KEY is SET"
+          [ -z "$GCP_PROJECT_ID" ] && echo "GCP_PROJECT_ID is EMPTY" || echo "GCP_PROJECT_ID is SET"
+       
       - name: Trigger Pipeline
         run: |
           python -c "
@@ -53,7 +63,7 @@ jobs:
           from src.alerting.email_alert import AlertManager
           import os
           
-          os.environ['GOOGLE_APPLICATION_CREDENTIALS'] = os.environ['GOOGLE_GHA_CREDS_PATH']
+          os.environ['GOOGLE_APPLICATION_CREDENTIALS'] = os.environ.get('GOOGLE_GHA_CREDS_PATH', '')
           
           # ETL
           etl_result = run_etl_pipeline()
@@ -67,22 +77,15 @@ jobs:
           from src.database.bigquery_client import get_bq_client
           bq_client = get_bq_client()
           
-          trainer = ModelTrainer(bigquery_client=bq_client, project_id='${{ secrets.GCP_PROJECT_ID }}', dataset_id='BI_ENLA')
+          trainer = ModelTrainer(bigquery_client=bq_client, project_id=os.environ.get('GCP_PROJECT_ID'), dataset_id='BI_ENLA')
           trainer.train_all_models()
           
-          predictor = ENLAPredictor(bigquery_client=bq_client, project_id='${{ secrets.GCP_PROJECT_ID }}', dataset_id='BI_ENLA')
+          predictor = ENLAPredictor(bigquery_client=bq_client, project_id=os.environ.get('GCP_PROJECT_ID'), dataset_id='BI_ENLA')
           pred_result = predictor.run_full_prediction_pipeline()
           print(f'Predictions: {pred_result.status}')
           
           # Alerts
-          alerter = AlertManager(bigquery_client=bq_client, project_id='${{ secrets.GCP_PROJECT_ID }}', dataset_id='BI_ENLA')
+          alerter = AlertManager(bigquery_client=bq_client, project_id=os.environ.get('GCP_PROJECT_ID'), dataset_id='BI_ENLA')
           alert_result = alerter.trigger_alerts()
           print(f'Alerts: {alert_result.status}')
           "
-        env:
-          # TODO: Cambiar a secrets.* después de mover credenciales a Secrets en GitHub
-          MONGODB_URI: ${{ secrets.MONGODB_URI || vars.MONGODB_URI }}
-          GCP_PROJECT_ID: ${{ secrets.GCP_PROJECT_ID || vars.GCP_PROJECT_ID || secrets.BQ_PROJECT || vars.BQ_PROJECT }}
-          SENDGRID_API_KEY: ${{ secrets.SENDGRID_API_KEY || vars.SENDGRID_API_KEY }}
-          EMAIL_FROM: ${{ secrets.EMAIL_FROM || vars.EMAIL_FROM || 'bernabevillegas013@gmail.com' }}
-          EMAIL_TO: ${{ secrets.EMAIL_TO || vars.EMAIL_TO || 'bvillegasa@ucvvirtual.edu.pe' }}
