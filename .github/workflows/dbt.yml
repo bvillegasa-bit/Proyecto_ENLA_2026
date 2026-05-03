@@ -55,7 +55,7 @@ jobs:
       - name: Configure dbt profile
         run: |
           mkdir -p ~/.dbt
-          cat > ~/.dbt/profiles.yml << 'EOF'
+          cat > ~/.dbt/profiles.yml << EOF
           enla_callao:
             target: prod
             outputs:
