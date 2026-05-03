@@ -287,16 +287,16 @@ class TestNullHandling:
         assert all(result['score'].isna())
     
     def test_null_scores_included_in_output(self, mock_etl_transform: ETLTransform,
-                                            sample_raw_df: pd.DataFrame):
+                                             sample_raw_df: pd.DataFrame):
         """Verify that rows with NULL scores are NOT filtered out."""
         result = mock_etl_transform._transform_to_long_format(sample_raw_df)
         
-        # EST002 has NULL ccss score (M500_EM_2S_2023_CS is None)
-        est002_ccss = result[
-            (result['cor_est'] == 'EST002') & (result['area_academica'] == 'ccss')
+        # EST001 has NULL ccss score (M500_EM_2S_2023_CS is None)
+        est001_ccss = result[
+            (result['cor_est'] == 'EST001') & (result['area_academica'] == 'ccss')
         ]
-        assert len(est002_ccss) == 1
-        assert est002_ccss.iloc[0]['is_null_score'] == True
+        assert len(est001_ccss) == 1
+        assert est001_ccss.iloc[0]['is_null_score'] == True
     
     def test_null_score_count_accuracy(self, mock_etl_transform: ETLTransform,
                                         sample_raw_df: pd.DataFrame):
