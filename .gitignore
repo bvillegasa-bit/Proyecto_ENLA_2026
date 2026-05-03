@@ -67,3 +67,4 @@ dbt_packages/
 # Credentials (secret manager files)
 service-account-key.json
 credentials.json
+enla-*-*.json

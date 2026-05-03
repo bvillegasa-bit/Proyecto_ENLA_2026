@@ -8,7 +8,9 @@
 
 ## 📋 Descripción
 
-**ENLA 2026 Callao** es una plataforma de Machine Learning diseñada para predecir el éxito académico de instituciones educativas en la región del Callao, Perú. El sistema procesa datos históricos de evaluaciones académicas y genera predicciones para el año 2026 en cuatro áreas fundamentales: **Comunicación, Matemática, Ciencias Sociales (CCSS) y Ciencia y Tecnología (CyT)**.
+**ENLA 2026 Callao** es un proyecto académico desarrollado para el curso de **Business Intelligence and Big Data** del **VII Ciclo** de la carrera de **Ingeniería de Sistemas** en la **Universidad César Vallejo - Campus Callao**.
+
+La plataforma utiliza técnicas de Machine Learning para predecir el éxito académico de instituciones educativas en la región del Callao, Perú. El sistema procesa datos históricos de evaluaciones académicas del MINEDU y genera predicciones para el año 2026 en cuatro áreas fundamentales: **Comunicación, Matemática, Ciencias Sociales (CCSS) y Ciencia y Tecnología (CyT)**.
 
 El proyecto implementa un pipeline completo de datos que abarca desde la ingestión de archivos Excel hasta la visualización de resultados en dashboards interactivos. Utiliza exclusivamente **servicios gratuitos sin necesidad de tarjeta de crédito**, aprovechando Google Sheets, Google Colab, MongoDB Atlas (capa M0), SendGrid y Looker Studio.
 
@@ -97,6 +99,72 @@ Features (src/features) → Models (src/models) → Predicciones
 Alerting (src/alerting) → SendGrid (emails) → Looker Studio (dashboards)
 ```
 
+## 📊 Fuente de Datos
+
+Los datos utilizados en este proyecto provienen de la **Plataforma de Resultados de Pruebas Nacionales del MINEDU**.
+
+- **Fuente**: Ministerio de Educación del Perú (MINEDU)
+- **URL**: [http://umc.minedu.gob.pe/](http://umc.minedu.gob.pe/)
+- **Nivel educativo**: Solo archivos de **2do de secundaria**
+- **Formato**: Archivos Excel (`.xlsx`)
+
+### ⚠️ Consideraciones Importantes
+
+1. **No existe columna de fecha en los archivos**: Los archivos Excel del MINEDU no contienen una columna con la fecha de evaluación. La fecha se **extrae del nombre del archivo** (ej. `enla_2023.xlsx` → año 2023).
+
+2. **Columna "Cyt" (Ciencia y Tecnología)**: En algunos años, los archivos **NO incluyen la columna `cor_est_cyt`** (Ciencia y Tecnología). En estos casos, el sistema:
+   - Detecta la ausencia de la columna durante la validación
+   - Asigna el valor `null` o un valor por defecto según corresponda
+   - Continúa con el procesamiento de las demás áreas (Comunicación, Matemática, CCSS)
+
+3. **Columnas esperadas**: El sistema valida que estén presentes las columnas requeridas: `id_ie`, `id_seccion`, `nom_ie`, `nom_dre`, `ano_evaluacion`, `grado_evaluacion`, `cor_est_comunicacion`, `cor_est_matematica`, `cor_est_ccss`, `cor_est_cyt`.
+
+## 📂 Dónde Colocar los Archivos a Analizar
+
+Los archivos Excel del MINEDU deben colocarse en la siguiente carpeta:
+
+```
+data/raw/
+```
+
+**Ejemplo de ruta completa**:
+```
+C:\Users\BernabeA.LAPTOP-KB1N2IHM\BERNA\UCV\VII CICLO\BUSINESS INTELLIGENCE AND BIG DATA\enla-2026-callao\data\raw\enla_2023.xlsx
+```
+
+**Cómo ejecutar la ingesta**:
+```bash
+python src/ingestion/ingest_enla.py --input data/raw/enla_2023.xlsx
+```
+
+> **Nota**: Esta ruta está configurada en el sistema y los archivos en `data/raw/` están en el `.gitignore` para evitar subir datos reales al repositorio.
+
+## 🔄 Control de Duplicados
+
+El sistema implementa un **control de duplicados robusto** para evitar la carga repetida de datos:
+
+### Método de Control
+- **Clave compuesta (UPSERT)**: Se utiliza una combinación de tres campos como identificador único:
+  - `id_ie` (ID de la institución educativa)
+  - `id_seccion` (ID de la sección)
+  - `ano_evaluacion` (Año de evaluación)
+
+### ¿Cómo funciona?
+1. **Deduplicación local**: Antes de insertar en la base de datos, se eliminan duplicados en el DataFrame usando `drop_duplicates(subset=['id_ie', 'id_seccion', 'ano_evaluacion'])`.
+
+2. **UPSERT en MongoDB**: Se utiliza `update_one()` con `upsert=True`, lo que significa:
+   - Si el registro **no existe**: Se inserta como nuevo
+   - Si el registro **ya existe**: Se actualiza con la nueva información
+
+3. **Auditoría**: Cada ingesta se registra en la colección `enla_ingestion_log` con un `ingestion_id` único, permitiendo rastrear cuándo y qué datos fueron cargados.
+
+### Beneficios
+- ✅ Permite re-ejecutar la ingesta de un archivo sin crear duplicados
+- ✅ Actualiza datos si el archivo fuente se corrige
+- ✅ Mantiene un historial de auditoría de cargas
+
+**Implementación**: `src/ingestion/ingest_enla.py` - Métodos `deduplicate()` y `upsert_to_mongodb()`
+
 ## 🚀 Instalación Rápida
 
 ### Pre-requisitos
@@ -148,7 +216,7 @@ MONGODB_URI=mongodb+srv://user:pass@cluster.mongodb.net/
 
 # Google Cloud Platform
 GCP_PROJECT_ID=tu-project-id
-GCP_CREDENTIALS_PATH=/path/to/service-account-key.json
+GCP_CREDENTIALS_PATH=C:\path\to\enla-2026-callao-b1647acf0884.json
 
 # Email Alerts (SendGrid)
 SENDGRID_API_KEY=SG.xxxxx
@@ -157,6 +225,12 @@ ALERT_EMAIL_FROM=tu-email@gmail.com
 # Logging
 LOG_LEVEL=INFO
 ```
+
+> ⚠️ **IMPORTANTE - Archivos de Credenciales**:
+> - El archivo de credenciales de Google Cloud (`enla-2026-callao-b1647acf0884.json` o similar) **NUNCA debe subirse a GitHub**
+> - Este archivo ya está incluido en `.gitignore` (patrón `*.json`)
+> - Configure la ruta completa en la variable `GCP_CREDENTIALS_PATH`
+> - Guarde el archivo JSON en una ubicación segura fuera del repositorio, o en una carpeta local que no esté versionada
 
 ## 📖 Guía de Uso
 
@@ -257,10 +331,26 @@ Este proyecto está bajo la Licencia MIT. Ver el archivo [LICENSE](LICENSE) para
 
 ## 👥 Autores
 
-- **Equipo ENLA 2026 Callao** - *Desarrollo inicial*
-- **Bernabe Villegas** - *Investigación y documentación*
+**Docente**: Mgtr. Lucero Carrillo, Erick David
+
+**Equipo ENLA 2026 Callao** - *VII Ciclo - Ingeniería de Sistemas, UCV Campus Callao*:
+
+| Integrante | Rol |
+|------------|-----|
+| Achig Condolo, Daysi Juliana | Desarrollo |
+| Armas Morante, Deyvi Smith | Desarrollo |
+| Calvache Velasco, Guillermo Leonardo | Desarrollo |
+| Carbajal Ocmin, Jhon Antonio | Desarrollo |
+| Salas Ampuero, Cielo Almendra | Desarrollo |
+| Villegas Arceles, Bernabé Alberto | Desarrollo |
+
+**Proyecto académico** para el curso de *Business Intelligence and Big Data* - 2026.
 
 ## 🙏 Agradecimientos
+
+Agradecemos al Mgtr. Lucero Carrillo, Erick David por su valiosa guía y enseñanzas en el curso de Business Intelligence and Big Data.
+
+Proyecto desarrollado para el VII Ciclo de la carrera de Ingeniería de Sistemas en la Universidad César Vallejo - Campus Callao.
 
 - A la **DRE Callao** por proporcionar los datos históricos académicos
 - A **Google Cloud Platform** por los servicios gratuitos (BigQuery Sandbox, Colab)
