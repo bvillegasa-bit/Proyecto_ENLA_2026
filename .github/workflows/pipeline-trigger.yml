@@ -130,19 +130,19 @@ jobs:
       - name: Configure dbt profile
         run: |
           mkdir -p ~/.dbt
-          cat > ~/.dbt/profiles.yml << EOF
-enla_callao:
-  target: prod
-  outputs:
-    prod:
-      type: bigquery
-      method: oauth
-      project: ${BQ_PROJECT:-enla-2026-callao}
-      dataset: ${DBT_DATASET_ID:-BI_ENLA}
-      threads: 4
-      timeout_seconds: 300
-      location: southamerica-east1
-EOF
+          cat > ~/.dbt/profiles.yml << 'EOF'
+          enla_callao:
+            target: prod
+            outputs:
+              prod:
+                type: bigquery
+                method: oauth
+                project: ${BQ_PROJECT:-enla-2026-callao}
+                dataset: ${DBT_DATASET_ID:-BI_ENLA}
+                threads: 4
+                timeout_seconds: 300
+                location: southamerica-east1
+          EOF
           echo "dbt profile configured with project: ${BQ_PROJECT:-enla-2026-callao}"
         env:
           BQ_PROJECT: ${{ vars.BQ_PROJECT || 'enla-2026-callao' }}
