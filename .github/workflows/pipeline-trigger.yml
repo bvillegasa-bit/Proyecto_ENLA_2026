@@ -19,8 +19,12 @@ on:
 jobs:
   trigger:
     runs-on: ubuntu-latest
+    # TODO: MOVER CREDENCIALES A SECRETS - Settings → Secrets and variables → Actions → Secrets
+    # Las credenciales (MONGODB_URI, SENDGRID_API_KEY, GCP_SA_KEY) NO deben estar como Variables (visibles)
     env:
-      GCP_SA_KEY: ${{ secrets.GCP_SA_KEY }}
+      # Usar vars.* temporalmente - CAMBIAR A secrets.* después de mover a Secrets
+      GCP_SA_KEY: ${{ secrets.GCP_SA_KEY || vars.GCP_SA_KEY }}
+      BQ_PROJECT: ${{ secrets.BQ_PROJECT || vars.BQ_PROJECT || 'enla-2026-callao' }}
     
     steps:
       - uses: actions/checkout@v4
@@ -76,6 +80,9 @@ jobs:
           print(f'Alerts: {alert_result.status}')
           "
         env:
-          MONGODB_URI: ${{ secrets.MONGODB_URI }}
-          GCP_PROJECT_ID: ${{ secrets.GCP_PROJECT_ID }}
-          SENDGRID_API_KEY: ${{ secrets.SENDGRID_API_KEY }}
+          # TODO: Cambiar a secrets.* después de mover credenciales a Secrets en GitHub
+          MONGODB_URI: ${{ secrets.MONGODB_URI || vars.MONGODB_URI }}
+          GCP_PROJECT_ID: ${{ secrets.GCP_PROJECT_ID || vars.GCP_PROJECT_ID || secrets.BQ_PROJECT || vars.BQ_PROJECT }}
+          SENDGRID_API_KEY: ${{ secrets.SENDGRID_API_KEY || vars.SENDGRID_API_KEY }}
+          EMAIL_FROM: ${{ secrets.EMAIL_FROM || vars.EMAIL_FROM || 'bernabevillegas013@gmail.com' }}
+          EMAIL_TO: ${{ secrets.EMAIL_TO || vars.EMAIL_TO || 'bvillegasa@ucvvirtual.edu.pe' }}

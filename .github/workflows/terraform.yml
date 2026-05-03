@@ -12,8 +12,11 @@ permissions:
 jobs:
   terraform:
     runs-on: ubuntu-latest
+    # TODO: MOVER CREDENCIALES A SECRETS - Settings → Secrets and variables → Actions → Secrets
     env:
-      GCP_SA_KEY: ${{ secrets.GCP_SA_KEY }}
+      # Usar vars.* temporalmente - CAMBIAR A secrets.* después de mover a Secrets
+      GCP_SA_KEY: ${{ secrets.GCP_SA_KEY || vars.GCP_SA_KEY }}
+      BQ_PROJECT: ${{ secrets.BQ_PROJECT || vars.BQ_PROJECT || 'enla-2026-callao' }}
     defaults:
       run:
         working-directory: terraform
@@ -33,7 +36,7 @@ jobs:
       - name: Authenticate to Google Cloud
         uses: google-github-actions/auth@v2
         with:
-          credentials_json: ${{ secrets.GCP_SA_KEY }}
+          credentials_json: ${{ secrets.GCP_SA_KEY || vars.GCP_SA_KEY }}
           create_credentials_file: true
       
       - name: Set up Cloud SDK
@@ -48,16 +51,18 @@ jobs:
       - name: Terraform Plan
         run: terraform plan -input=false
         env:
-          TF_VAR_project_id: ${{ secrets.GCP_PROJECT_ID }}
-          TF_VAR_mongodb_uri: ${{ secrets.MONGODB_URI }}
-          TF_VAR_sendgrid_api_key: ${{ secrets.SENDGRID_API_KEY }}
+          # TODO: Cambiar a secrets.* después de mover credenciales a Secrets en GitHub
+          TF_VAR_project_id: ${{ secrets.GCP_PROJECT_ID || vars.GCP_PROJECT_ID || secrets.BQ_PROJECT || vars.BQ_PROJECT }}
+          TF_VAR_mongodb_uri: ${{ secrets.MONGODB_URI || vars.MONGODB_URI }}
+          TF_VAR_sendgrid_api_key: ${{ secrets.SENDGRID_API_KEY || vars.SENDGRID_API_KEY }}
           TF_VAR_alert_emails: '["admin@dre-callao.gob.pe"]'
       
       - name: Terraform Apply (auto-apply on main)
         if: github.ref == 'refs/heads/main' && github.event_name == 'push'
         run: terraform apply -auto-approve -input=false
         env:
-          TF_VAR_project_id: ${{ secrets.GCP_PROJECT_ID }}
-          TF_VAR_mongodb_uri: ${{ secrets.MONGODB_URI }}
-          TF_VAR_sendgrid_api_key: ${{ secrets.SENDGRID_API_KEY }}
+          # TODO: Cambiar a secrets.* después de mover credenciales a Secrets en GitHub
+          TF_VAR_project_id: ${{ secrets.GCP_PROJECT_ID || vars.GCP_PROJECT_ID || secrets.BQ_PROJECT || vars.BQ_PROJECT }}
+          TF_VAR_mongodb_uri: ${{ secrets.MONGODB_URI || vars.MONGODB_URI }}
+          TF_VAR_sendgrid_api_key: ${{ secrets.SENDGRID_API_KEY || vars.SENDGRID_API_KEY }}
           TF_VAR_alert_emails: '["admin@dre-callao.gob.pe"]'
