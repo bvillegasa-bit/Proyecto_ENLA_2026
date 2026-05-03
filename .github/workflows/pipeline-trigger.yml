@@ -19,7 +19,8 @@ on:
 jobs:
   trigger:
     runs-on: ubuntu-latest
-    if: secrets.GCP_SA_KEY != ''
+    env:
+      GCP_SA_KEY: ${{ secrets.GCP_SA_KEY }}
     
     steps:
       - uses: actions/checkout@v4
@@ -33,6 +34,7 @@ jobs:
         run: pip install -r requirements.txt
        
       - name: Authenticate to Google Cloud
+        if: ${{ env.GCP_SA_KEY != '' }}
         uses: google-github-actions/auth@v2
         with:
           credentials_json: ${{ secrets.GCP_SA_KEY }}
