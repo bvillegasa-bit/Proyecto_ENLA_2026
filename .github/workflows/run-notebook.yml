@@ -12,11 +12,11 @@ jobs:
     env:
       MONGODB_URI: ${{ secrets.MONGODB_URI }}
       GCP_SA_KEY: ${{ secrets.GCP_SA_KEY }}
-      GCP_PROJECT_ID: ${{ secrets.GCP_PROJECT_ID }}
+      GCP_PROJECT_ID: ${{ vars.BQ_PROJECT || secrets.GCP_PROJECT_ID || 'enla-2026-callao' }}
       SENDGRID_API_KEY: ${{ secrets.SENDGRID_API_KEY }}
-      EMAIL_FROM: ${{ secrets.EMAIL_FROM }}
-      EMAIL_TO: ${{ secrets.EMAIL_TO }}
-      BQ_PROJECT: ${{ secrets.GCP_PROJECT_ID || 'enla-2026-callao' }}
+      EMAIL_FROM: ${{ vars.EMAIL_FROM }}
+      EMAIL_TO: ${{ vars.EMAIL_TO }}
+      BQ_PROJECT: ${{ vars.BQ_PROJECT || secrets.GCP_PROJECT_ID || 'enla-2026-callao' }}
 
     steps:
     - uses: actions/checkout@v4
@@ -38,9 +38,16 @@ jobs:
     - name: Debug - Check env vars
       run: |
         echo "Checking environment variables..."
-        [ -z "$MONGODB_URI" ] && echo "MONGODB_URI is EMPTY" || echo "MONGODB_URI is SET"
+        if [ -z "$MONGODB_URI" ]; then
+          echo "ERROR: MONGODB_URI is EMPTY or not set"
+          exit 1
+        else
+          echo "OK: MONGODB_URI is SET (length: ${#MONGODB_URI})"
+        fi
         [ -z "$SENDGRID_API_KEY" ] && echo "SENDGRID_API_KEY is EMPTY" || echo "SENDGRID_API_KEY is SET"
         [ -z "$GCP_PROJECT_ID" ] && echo "GCP_PROJECT_ID is EMPTY" || echo "GCP_PROJECT_ID is SET"
+        echo "EMAIL_FROM: ${EMAIL_FROM:-NOT SET}"
+        echo "EMAIL_TO: ${EMAIL_TO:-NOT SET}"
 
     - name: Run pipeline
       run: |
