@@ -20,15 +20,26 @@ La arquitectura está diseñada para ser escalable y mantenible, utilizando las 
 
 - **📊 Predicción Académica**: Modelos de Machine Learning (Logistic Regression) para 4 áreas académicas
 - **🔄 Pipeline ETL Completo**: Ingestión → Transformación → Features → Modelos → Predicción
-- **☁️ Arquitectura Cloud-Native**: Integración con Google Cloud Platform (BigQuery, Cloud Functions)
+- **☁️ Arquitectura Cloud-Native**: Integración con Google Cloud Platform (**BigQuery Sandbox** - sin billing)
 - **📧 Sistema de Alertas**: Notificaciones automáticas por email via SendGrid para casos de riesgo ALTO
 - **📈 5 Dashboards Looker Studio**: Visualización ejecutiva por área y resumen general
 - **🗄️ Múltiples Almacenamientos**: MongoDB Atlas (staging) y BigQuery (Data Warehouse)
 - **🧪 Testing Robusto**: Más de 100 tests unitarios e integración con pytest
-- **🚀 CI/CD Automatizado**: GitHub Actions para despliegue continuo
+- **🚀 CI/CD Automatizado**: GitHub Actions para orquestación (gratis, sin Cloud Functions)
 - **📓 Notebooks Colab**: Ejecución del pipeline completo sin configuración local
 - **🏗️ Infraestructura como Código**: Terraform para gestión de recursos cloud
 - **🔧 Transformaciones dbt**: Modelos dbt para BigQuery con vistas materializadas
+
+### 🎯 Configuración Sin Facturación (Recomendado)
+
+Este proyecto está optimizado para funcionar **SIN necesidad de activar billing**:
+- **BigQuery Sandbox**: 10 GB almacenamiento + 1 TB consultas/mes (gratis)
+- **GitHub Actions**: 2000 min/mes para ejecutar el pipeline automáticamente
+- **Looker Studio**: Dashboards ejecutivos (gratis)
+- **MongoDB Atlas M0**: 512 MB para staging (gratis)
+- **SendGrid Free**: 100 emails/día para alertas (gratis)
+
+> **Nota**: Cloud Functions requiere billing y ha sido deshabilitado. GitHub Actions maneja la orquestación del pipeline.
 
 ## 🏗️ Arquitectura
 
@@ -171,9 +182,12 @@ El sistema implementa un **control de duplicados robusto** para evitar la carga 
 
 - **Python 3.9+** ([descargar](https://www.python.org/downloads/))
 - **Cuenta en MongoDB Atlas** (capa M0 gratuita, [registrarse](https://www.mongodb.com/cloud/atlas/register))
-- **Cuenta en Google Cloud Platform** (para BigQuery Sandbox, [crear proyecto](https://console.cloud.google.com/))
+- **Cuenta de Google** (para BigQuery Sandbox - **SIN tarjeta de crédito**, [activar Sandbox](https://console.cloud.google.com/bigquery))
 - **Cuenta en SendGrid** (plan gratuito 100 emails/día, [registrarse](https://sendgrid.com/free/))
 - **Git** ([descargar](https://git-scm.com/downloads))
+
+> **💡 IMPORTANTE**: El proyecto funciona con **BigQuery Sandbox** (gratis, sin tarjeta).
+> Cloud Functions requiere billing y ha sido deshabilitado. GitHub Actions maneja el pipeline.
 
 ### Pasos de Instalación
 
@@ -302,6 +316,7 @@ pytest tests/integration/ -v
 ## 📚 Documentación
 
 - **[Guía de Despliegue Completa](docs/GUIA_DESPLEGUE.md)** - Instrucciones paso a paso para desplegar todo el sistema
+- **[Configuración Sin Facturación](docs/GUIA_SIN_FACTURACION.md)** - BigQuery Sandbox + GitHub Actions (Sin tarjeta)
 - **[Arquitectura del Sistema](docs/ARCHITECTURE.md)** - Documento técnico de arquitectura
 - **[Especificación de Dashboards](docs/DASHBOARD_SPEC.md)** - Detalles de los 5 dashboards Looker Studio
 - **[Guía Cloud](docs/GUIA_DESPLEGUE_CLOUD.md)** - Despliegue en Google Cloud Platform

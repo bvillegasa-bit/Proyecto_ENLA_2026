@@ -1,7 +1,31 @@
 # Guia de Despliegue Completo — ENLA 2026 Callao
 
 > **De la subida de datos a los dashboards de Looker Studio**
-> Ultima actualizacion: 2026-05-01
+> Ultima actualizacion: 2026-05-03
+
+---
+
+## 🎯 ARQUITECTURA SIN FACTURACIÓN (RECOMENDADO)
+
+Este proyecto está configurado para funcionar **SIN necesidad de activar billing**:
+
+| Componente | Servicio | Costo | Requiere Tarjeta? |
+|------------|----------|-------|-------------------|
+| Almacenamiento | **BigQuery Sandbox** | Gratis (10 GB + 1 TB/mes) | ❌ No |
+| Orquestación | **GitHub Actions** | Gratis (2000 min/mes) | ❌ No |
+| Dashboards | **Looker Studio** | Gratis | ❌ No |
+| Staging | **MongoDB Atlas M0** | Gratis (512 MB) | ❌ No |
+| Alertas | **SendGrid Free** | Gratis (100 emails/día) | ❌ No |
+
+**Cloud Functions está DESHABILITADO** (requiere billing). GitHub Actions ejecuta el pipeline automáticamente.
+
+### Inicio Rápido (Sin Billing)
+
+1. **BigQuery Sandbox**: Ve a https://console.cloud.google.com/bigquery → Crea proyecto → Sandbox se activa automáticamente
+2. **GitHub Actions**: Los workflows `run-notebook.yml` y `pipeline-trigger.yml` ya están configurados
+3. **Looker Studio**: Conecta a tu BigQuery Sandbox para dashboards
+
+---
 
 ---
 
@@ -983,9 +1007,20 @@ Repetir para cada area (comunicacion, matematica, ccss, cyt):
 
 ## FASE 11: Automatizacion con GitHub Actions
 
-### 11.1. Crear workflow para ejecutar notebook periodicamente
+> **NOTA**: Cloud Functions requiere billing y ha sido **DESHABILITADO** (renombrado a `.DISABLED`).
+> GitHub Actions maneja todo el pipeline automáticamente sin costo.
 
-Crear archivo `.github/workflows/run-notebook.yml`:
+### 11.1. Workflows Configurados (Sin Billing)
+
+El proyecto ya tiene estos workflows configurados:
+
+| Workflow | Propósito | Activación |
+|----------|------------|-------------|
+| `run-notebook.yml` | Ejecuta pipeline ETL completo | Manual + Diario 03:00 UTC |
+| `pipeline-trigger.yml` | Orquestación completa (ETL+ML+Alerts) | Manual + Diario 03:00 UTC |
+| `dbt.yml` | Ejecuta modelos dbt en BigQuery | Al hacer push a `dbt/**` |
+
+**Cloud Functions deshabilitado**: `deploy-cloud-function.yml.DISABLED`
 
 ```yaml
 name: Run ENLA 2026 Pipeline

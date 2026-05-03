@@ -161,53 +161,85 @@ SendGrid es el servicio de envío de correos electrónicos para las alertas de i
 
 ## 3. Google Cloud Platform y BigQuery
 
-Google Cloud Platform (GCP) proporciona BigQuery para el almacenamiento y análisis de datos, y Cloud Functions para la orquestación del pipeline.
+Google Cloud Platform (GCP) proporciona BigQuery para el almacenamiento y análisis de datos.
+**IMPORTANTE**: Este proyecto está configurado para funcionar **SIN necesidad de activar la facturación (billing)**,
+usando **BigQuery Sandbox** (gratis) + **GitHub Actions** (gratis) + **Looker Studio** (gratis).
 
-### Paso 1: Crear cuenta / Iniciar sesión
+### Opción A: BigQuery Sandbox (RECOMENDADO - Sin Tarjeta de Crédito)
+
+BigQuery Sandbox te permite usar BigQuery **sin cuenta de facturación**:
+- **10 GB** de almacenamiento gratis
+- **1 TB** de consultas por mes gratis
+- **NO requiere tarjeta de crédito**
+- **NO requiere billing account**
+
+**Limitaciones**:
+- ❌ No tiene BigQuery ML (usamos scikit-learn en Colab)
+- ❌ No permite DML (INSERT/UPDATE/DELETE) después de 90 días — usamos `load_table_from_dataframe`
+- ❌ Las tablas expiran después de 60 días (puedes extenderlas)
+- ✅ SÍ permite: crear datasets, cargar datos (batch), consultas SQL, conectar Looker Studio
+
+#### Paso 1: Activar BigQuery Sandbox
+
+1. Ve directamente a: [https://console.cloud.google.com/bigquery](https://console.cloud.google.com/bigquery)
+   - **IMPORTANTE**: Usa esta URL directa, NO vayas al console general
+2. Si no tienes un proyecto, crea uno:
+   - Clic en el selector de proyectos (arriba a la izquierda)
+   - Clic en **NUEVO PROYECTO**
+   - Nombre: `enla-2026-callao`
+   - Clic en **CREAR**
+3. Verifica que Sandbox está activo:
+   - Una vez en la interfaz de BigQuery, busca el texto **"Sandbox mode"** o **"Modo Sandbox"**
+   - Si lo ves, ¡felicidades! Sandbox está activo sin billing
+
+#### Paso 2: Crear el dataset `BI_ENLA`
+
+1. En el panel izquierdo, clic en tu proyecto (`enla-2026-callao`)
+2. Clic en los 3 puntos `⋮` → **Crear dataset**
+3. Configuración:
+   - **ID del dataset**: `BI_ENLA`
+   - **Ubicación**: `US` (o `southamerica-east1` para menor latencia en Perú)
+   - **Tiempo de expiración de la tabla**: 60 días (puedes cambiarlo después)
+4. Clic en **CREAR DATASET**
+
+#### Paso 3: Verificar que funciona
+
+1. En el editor de SQL, ejecuta esta consulta:
+   ```sql
+   SELECT "BigQuery Sandbox funciona correctamente" AS mensaje
+   ```
+2. Deberías ver el resultado en la parte inferior
+
+---
+
+### Opción B: Con Facturación (NO RECOMENDADO para este proyecto)
+
+Si deseas usar todas las funcionalidades de BigQuery (incluyendo DML después de 90 días y scheduled queries),
+puedes activar la facturación:
 
 1. Ve a [https://console.cloud.google.com/](https://console.cloud.google.com/)
 2. Inicia sesión con tu cuenta de Google
-3. Si es tu primera vez:
-   - Acepta los términos de servicio
-   - Selecciona tu país: Perú
-   - Haz clic en **"Continuar"**
-
-### Paso 2: Crear proyecto
-
-1. En la barra superior, junto al logo de Google Cloud, haz clic en el selector de proyectos
-2. Haz clic en **"NEW PROJECT"** (botón superior derecho)
-3. Completa el formulario:
+3. Crea un proyecto:
    - **Project Name**: `enla-2026-callao`
    - **Billing Account**: Selecciona o crea una cuenta de facturación
-     - Si no tienes, haz clic en "Create Billing Account"
-     - Necesitas una tarjeta de crédito (se te darán $300 USD de crédito gratuito)
-4. Haz clic en **"CREATE"**
-5. Espera a que se cree el proyecto (aparecerá una notificación arriba a la derecha)
-
-📸 **Pantalla esperada**: El panel de control (dashboard) de tu nuevo proyecto.
-
-### Paso 3: Habilitar APIs necesarias
-
-1. En la barra de búsqueda superior, escribe: `BigQuery API`
-2. Haz clic en el resultado **"BigQuery API"**
-3. Haz clic en el botón **"ENABLE"** (azul)
-4. Repite para estas APIs:
+     - Requiere tarjeta de crédito (se te dan $300 USD de crédito gratuito)
+4. Habilita estas APIs:
+   - `BigQuery API`
    - `BigQuery Connection API`
-   - `Cloud Functions API`
-   - `Cloud Pub/Sub API`
-   - `Cloud Storage API`
-   - `IAM Service Account Credentials API`
-   - `Cloud Resource Manager API` ⚠️ **CRÍTICO** - Requerido para despliegue de Cloud Functions
-   - `Compute Engine API` - Requerido para Cloud Functions Gen2
-   - `Artifact Registry API` - Requerido para almacenar contenedores
+   - `Cloud Resource Manager API` (si usas Cloud Functions, que requiere billing)
 
-📸 **Pantalla esperada**: Cada API mostrará "API enabled" con una marca verde.
+---
 
-⚠️ **NOTA IMPORTANTE**: Si vas a usar GitHub Actions para desplegar Cloud Functions,
-asegúrate de que estas APIs estén habilitadas ANTES de ejecutar el workflow.
-El API `Cloud Resource Manager API` es especialmente crítica y debe habilitarse manualmente
-si nunca se ha usado en el proyecto. Visita:
-https://console.developers.google.com/apis/api/cloudresourcemanager.googleapis.com/overview?project=318247247954
+### Sobre Cloud Functions (OPCIONAL - Requiere Billing)
+
+⚠️ **Cloud Functions NO está disponible en BigQuery Sandbox** (requiere billing).
+El proyecto está configurado para usar **GitHub Actions** en su lugar, que es gratuito.
+
+Si deseas usar Cloud Functions (no recomendado para este proyecto académico):
+1. Debes activar billing en tu proyecto
+2. Habilitar `Cloud Functions API`
+3. El workflow `deploy-cloud-function.yml` ha sido deshabilitado (renombrado a `.DISABLED`)
+4. Para reactivarlo, renómbralo eliminando la extensión `.DISABLED`
 
 ### Paso 4: Crear cuenta de servicio (Service Account)
 
@@ -560,44 +592,54 @@ Este error indica que la cuenta de servicio no tiene los permisos necesarios:
    - `Storage Admin` (acceder a código fuente en Cloud Storage)
 
 ### Error 403: "Read access to project denied: please check billing account"
-Este es un error común durante el despliegue de Cloud Functions con GitHub Actions:
+
+Este error ocurre cuando intentas usar servicios que **requieren facturación (billing)** en un proyecto que no la tiene activada.
+
+**Ejemplo del error**:
 ```
-ERROR: (gcloud.functions.deploy) ResponseError: status=[403], code=[], 
+ERROR: (gcloud.functions.deploy) ResponseError: status=[403], code=[],
 message=[Read access to project '***' was denied: please check billing account associated and retry]
 ```
 
-**Causa raíz**: La cuenta de servicio no tiene permisos básicos de lectura Y/O la cuenta de facturación (billing) no está configurada correctamente.
+**SOLUCIÓN RECOMENDADA: Usar BigQuery Sandbox (Sin Billing)**
 
-**Solución - PASOS REQUERIDOS (debes hacerlos manualmente en GCP Console)**:
+Para este proyecto académico, **NO necesitas activar billing**. En su lugar:
 
-#### a. VERIFICAR CUENTA DE FACTURACIÓN (CAUSA MÁS COMÚN):
+1. **Usa BigQuery Sandbox** (gratis, sin tarjeta):
+   - Ve a: https://console.cloud.google.com/bigquery
+   - Sigue los pasos en la sección "Opción A: BigQuery Sandbox" al inicio de este documento
+   - Sandbox te da 10 GB + 1 TB consultas/mes GRATIS
+
+2. **Usa GitHub Actions para el pipeline** (ya configurado):
+   - El workflow `run-notebook.yml` ejecuta el pipeline automáticamente
+   - El workflow `pipeline-trigger.yml` permite ejecución manual y programada
+   - Ambos son GRATUITOS (2000 min/mes en repos públicos)
+
+3. **Cloud Functions está deshabilitado**:
+   - El archivo `deploy-cloud-function.yml` fue renombrado a `.DISABLED`
+   - Cloud Functions requiere billing, NO es necesario para este proyecto
+
+---
+
+**SI PREFIERES USAR BILLING** (NO recomendado para este proyecto):
+
+#### a. VERIFICAR CUENTA DE FACTURACIÓN:
 1. Ve a: https://console.cloud.google.com/billing/linked?project=318247247954
-2. Asegúrate de que una cuenta de facturación válida y activa esté vinculada al proyecto 318247247954
-3. Verifica que la cuenta tenga fondos disponibles (no cerrada, no agotada)
-4. Si no existe cuenta de facturación, crea una (requiere tarjeta de crédito, pero tiene $300 USD de crédito gratuito)
+2. Asegúrate de que una cuenta de facturación válida esté vinculada
+3. Verifica que tenga fondos disponibles
 
-#### b. OTORGAR PERMISOS DE LECTURA A LA CUENTA DE SERVICIO (CRÍTICO PARA 403):
+#### b. OTORGAR PERMISOS A LA CUENTA DE SERVICIO:
 1. Ve a: https://console.cloud.google.com/iam-admin/iam?project=318247247954
-2. Busca la cuenta de servicio (del secret GCP_SA_KEY, termina con @appspot.gserviceaccount.com)
-3. Haz clic en el ícono de lápiz para editar roles
-4. AGREGA el rol: **"Viewer" (roles/viewer)** - Rol de Visualizador Básico para acceso de lectura al proyecto
-5. MANTIÉN los roles existentes: cloudfunctions.developer, iam.serviceAccountUser, serviceusage.serviceUsageAdmin
-6. Haz clic en "GUARDAR"
-7. **NOTA IMPORTANTE**: ¡La cuenta de servicio DEBE tener roles/viewer para leer metadatos del proyecto durante el despliegue!
+2. Busca la cuenta de servicio (del secret GCP_SA_KEY)
+3. Agrega el rol: **"Viewer" (roles/viewer)**
+4. Mantén los roles existentes
 
-#### c. HABILITAR CLOUD BILLING API (si no está habilitado):
-1. Ve a: https://console.cloud.google.com/apis/library/cloudbilling.googleapis.com?project=318247247954
-2. Haz clic en "HABILITAR"
-3. Este API es necesario para verificar el estado de facturación
-
-#### d. VERIFICAR QUE TODOS LOS APIS REQUERIDOS ESTÉN HABILITADOS:
-- Cloud Resource Manager API (cloudresourcemanager.googleapis.com)
-- Cloud Functions API (cloudfunctions.googleapis.com)
-- **Cloud Billing API (cloudbilling.googleapis.com)** ← NUEVO: Agregado al workflow
-- Compute Engine API (compute.googleapis.com)
-- Artifact Registry API (artifactregistry.googleapis.com)
-
-**Diagnóstico rápido**: El paso "Verify GCP project access" en el workflow mostrará si la cuenta de servicio puede leer metadatos del proyecto. Si falla, completa los pasos (a) y (b) anteriores.
+#### c. HABILITAR APIS REQUERIDOS:
+- Cloud Resource Manager API
+- Cloud Functions API
+- Cloud Billing API
+- Compute Engine API
+- Artifact Registry API
 
 ---
 
