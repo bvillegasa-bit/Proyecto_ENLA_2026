@@ -56,18 +56,18 @@ jobs:
         run: |
           mkdir -p ~/.dbt
           cat > ~/.dbt/profiles.yml << 'EOF'
-enla_callao:
-  target: prod
-  outputs:
-    prod:
-      type: bigquery
-      method: oauth
-      project: ${{ secrets.GCP_PROJECT_ID || 'enla-2026-callao' }}
-      dataset: BI_ENLA
-      threads: 4
-      timeout_seconds: 300
-      location: southamerica-east1
-EOF
+          enla_callao:
+            target: prod
+            outputs:
+              prod:
+                type: bigquery
+                method: oauth
+                project: ${{ secrets.GCP_PROJECT_ID || 'enla-2026-callao' }}
+                dataset: BI_ENLA
+                threads: 4
+                timeout_seconds: 300
+                location: southamerica-east1
+          EOF
         env:
           # Ensure BQ_PROJECT is available for sources.yml env_var() calls
           BQ_PROJECT: ${{ secrets.GCP_PROJECT_ID || 'enla-2026-callao' }}
