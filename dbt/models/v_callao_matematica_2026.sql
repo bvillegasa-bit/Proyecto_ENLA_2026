@@ -5,6 +5,11 @@
 -- Purpose: Materialized view for Matemática area dashboard
 -- Refresh: Daily at 03:00 UTC via BigQuery scheduled query
 -- Connected to: Looker Studio Matemática Dashboard
+--
+-- Data source: 
+--   - Raw column: M500_EM_2S_2023_MA → academic area 'matematica'
+--   - Features: avg_score_2023, trend, variance from enla_callao_features
+--   - Predictions: risk_level, confidence from enla_callao_predictions_2026
 
 {{ config(materialized='view') }}
 

@@ -5,6 +5,11 @@
 -- Purpose: Materialized view for Ciencia y Tecnología area dashboard
 -- Refresh: Daily at 03:00 UTC via BigQuery scheduled query
 -- Connected to: Looker Studio CyT Dashboard
+--
+-- WARNING: CyT (Ciencia y Tecnología) data does NOT exist in the current Excel file.
+-- The source data only has: M500_EM_2S_2023_CT, M500_EM_2S_2023_MA, M500_EM_2S_2023_CS
+-- (NO M500_EM_2S_2023_CYT column exists).
+-- This view will return 0 rows until CyT data becomes available.
 
 {{ config(materialized='view') }}
 
@@ -26,4 +31,4 @@ FROM {{ ref('enla_callao_features') }} f
 LEFT JOIN {{ ref('enla_callao_predictions_2026') }} p
   ON f.institution_id = p.institution_id
   AND f.area = p.area
-WHERE f.area = 'cyt'
+WHERE f.area = 'cyt'  -- No data for this area - view will be empty

@@ -2,9 +2,14 @@
 -- ENLA 2026 Callao - CCSS Dashboard View
 -- Sprint 6: Materialized View for Looker Studio
 -- ==========================================
--- Purpose: Materialized view for CCSS area dashboard
+-- Purpose: Materialized view for Ciencias Sociales (CCSS) area dashboard
 -- Refresh: Daily at 03:00 UTC via BigQuery scheduled query
 -- Connected to: Looker Studio CCSS Dashboard
+--
+-- Data source: 
+--   - Raw column: M500_EM_2S_2023_CS → academic area 'ccss'
+--   - Features: avg_score_2023, trend, variance from enla_callao_features
+--   - Predictions: risk_level, confidence from enla_callao_predictions_2026
 
 {{ config(materialized='view') }}
 

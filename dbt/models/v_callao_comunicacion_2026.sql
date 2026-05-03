@@ -2,9 +2,14 @@
 -- ENLA 2026 Callao - Comunicación Dashboard View
 -- Sprint 6: Materialized View for Looker Studio
 -- ==========================================
--- Purpose: Materialized view for Comunicación area dashboard
+-- Purpose: Materialized view for Comunicación/Lectura area dashboard
 -- Refresh: Daily at 03:00 UTC via BigQuery scheduled query
 -- Connected to: Looker Studio Comunicación Dashboard
+--
+-- Data source: 
+--   - Raw column: M500_EM_2S_2023_CT → academic area 'comunicacion'
+--   - Features: avg_score_2023, trend, variance from enla_callao_features
+--   - Predictions: risk_level, confidence from enla_callao_predictions_2026
 
 {{ config(materialized='view') }}
 

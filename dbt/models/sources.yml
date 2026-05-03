@@ -1,6 +1,19 @@
 # ==========================================
 # ENLA 2026 Callao - dbt Source Definitions
-# Sprint 6: dbt Transformations
+# Sprint 6: dbt Transformations for Looker Studio
+# ==========================================
+# 
+# NOTE: This project uses a HYBRID approach:
+# - Python ETL (src/etl/transform.py): Handles data ingestion (Excel → MongoDB → BigQuery)
+# - Python Feature Engineering (src/features/engineer.py): Creates enla_callao_features
+# - Python ML Predictions (src/models/predictor.py): Creates enla_callao_predictions_2026
+# - dbt: Creates presentation-layer views for Looker Studio dashboards
+#
+# Actual Data Schema (from Excel):
+# - Raw data columns: M500_EM_2S_2023_CT, M500_EM_2S_2023_MA, M500_EM_2S_2023_CS
+#   (lectura/comunicacion, matematica, ccss - NO CyT data exists)
+# - "area" column = geographic zone (Rural/Urban), NOT academic area
+# - Academic areas derived: comunicacion, matematica, ccss (3 areas only, no cyt)
 # ==========================================
 
 version: 2
@@ -9,84 +22,61 @@ sources:
   - name: enla_raw
     description: "Raw data sources for ENLA 2026 Callao project"
     database: "{{ env_var('DBT_PROJECT_ID', 'bigquery-project-id') }}"
-    schema: "enla_raw"
+    schema: "{{ env_var('DBT_DATASET_ID', 'BI_ENLA') }}"
 
     tables:
       - name: enla_callao_raw
-        description: "Raw data ingested from MongoDB (source: Excel → MongoDB → BigQuery)"
+        description: >
+          Raw data ingested from MongoDB.
+          NOTE: 'area' column = geographic zone (Rural/Urban), NOT academic area.
+          Academic areas are derived from EMA 2023 columns: M500_EM_2S_2023_CT/MA/CS
         columns:
-          - name: institution_id
-            description: "Unique identifier for each educational institution"
+          - name: id_ie
+            description: "Institution ID"
             tests:
-              - unique
               - not_null
-          - name: nom_ie
-            description: "Name of the educational institution"
           - name: area
-            description: "Academic area (comunicacion, matematica, ccss, cyt)"
-          - name: score_2023
-            description: "Score achieved in 2023"
-          - name: score_2022
-            description: "Score achieved in 2022"
-          - name: score_2021
-            description: "Score achieved in 2021"
+            description: "Geographic zone: 'Rural' or 'Urban' (NOT academic area)"
+          - name: M500_EM_2S_2023_CT
+            description: "Lecture/Comunicación score (EMA 2023)"
+          - name: M500_EM_2S_2023_MA
+            description: "Matemática score (EMA 2023)"
+          - name: M500_EM_2S_2023_CS
+            description: "Ciencias Sociales score (EMA 2023)"
+          # NOTE: No CyT (Ciencia y Tecnología) data exists in the current Excel file
 
       - name: fact_enla
-        description: "Fact table with cleaned and transformed ENLA data"
+        description: >
+          Fact table with one row per student per academic area per year.
+          Created by Python ETL (src/etl/transform.py).
+          Academic areas: comunicacion, matematica, ccss (NO cyt)
         columns:
-          - name: institution_id
+          - name: id_ie
             tests:
               - not_null
-          - name: area
+          - name: area_academica
+            description: "Academic area: comunicacion, matematica, ccss"
             tests:
               - not_null
               - accepted_values:
-                  values: ['comunicacion', 'matematica', 'ccss', 'cyt']
-
-      - name: enla_callao_features
-        description: "Feature table created by Python feature engineering (Sprint 3)"
-        columns:
-          - name: institution_id
-            tests:
-              - not_null
-          - name: area
-            tests:
-              - not_null
-          - name: avg_score_2023
-            description: "Average score for 2023"
-          - name: trend
-            description: "Score trend over time"
-          - name: variance
-            description: "Score variance"
-
-      - name: enla_callao_predictions_2026
-        description: "ML model predictions for 2026"
-        columns:
-          - name: institution_id
-            tests:
-              - not_null
-          - name: area
-            tests:
-              - not_null
-          - name: predicted_success
-            description: "Binary prediction (0/1)"
-          - name: confidence
-            description: "Prediction confidence score (0-1)"
-          - name: risk_level
-            description: "Risk classification (ALTO/MEDIO/BAJO)"
-            tests:
-              - accepted_values:
-                  values: ['ALTO', 'MEDIO', 'BAJO']
-          - name: model_version
-            description: "Version of the model used for prediction"
-          - name: prediction_ts
-            description: "Timestamp of prediction"
+                  values: ['comunicacion', 'matematica', 'ccss']
+          - name: cor_est
+            description: "Student identifier"
+          - name: score
+            description: "Student score [0, 100]"
 
 # ==========================================
-# Source Tests
+# NOTE: The following tables are created by Python (NOT dbt sources).
+# They are documented here for reference only.
+# In dbt models, they are referenced using {{ ref() }} which works
+# because the tables already exist in BigQuery (created by Python pipeline).
 # ==========================================
-
-# Additional tests can be added here:
-# - Unique combinations
-# - Referential integrity between tables
-# - Row count validation
+#
+# Tables created by Python:
+# - enla_callao_features (src/features/engineer.py)
+# - enla_callao_predictions_2026 (src/models/predictor.py)
+#
+# These tables have 'area' column with values: comunicacion, matematica, ccss
+# (NO 'cyt' - no CyT data exists in the source Excel file)
+#
+# ==========================================

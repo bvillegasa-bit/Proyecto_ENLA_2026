@@ -2,9 +2,13 @@
 -- ENLA 2026 Callao - Executive Summary Dashboard View
 -- Sprint 6: Materialized View for Looker Studio
 -- ==========================================
--- Purpose: Executive summary across all 4 areas
+-- Purpose: Executive summary across all areas
 -- Refresh: Daily at 03:00 UTC via BigQuery scheduled query
 -- Connected to: Looker Studio Executive Summary Dashboard
+--
+-- NOTE: Data covers 3 academic areas: comunicacion, matematica, ccss
+-- (NO CyT/Ciencia y Tecnología data exists in the source Excel file)
+-- The 'cyt' row will show 0 institutions until CyT data becomes available.
 
 {{ config(materialized='view') }}
 
