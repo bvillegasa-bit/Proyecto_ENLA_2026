@@ -19,24 +19,24 @@ jobs:
         run: echo "GCP credentials configured"
       
       - uses: actions/checkout@v4
-         
+        
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
           python-version: '3.11'
-       
+      
       - name: Install dbt
         run: pip install dbt-bigquery==1.5.0
-       
+      
       - name: Authenticate to Google Cloud
         uses: google-github-actions/auth@v2
         with:
           credentials_json: ${{ secrets.GCP_SA_KEY || vars.GCP_SA_KEY }}
-       
-       - name: Configure dbt profile
+      
+      - name: Configure dbt profile
         run: |
           mkdir -p ~/.dbt
-          cat > ~/.dbt/profiles.yml << EOF
+          cat > ~/.dbt/profiles.yml << 'EOF'
           enla_callao:
             target: prod
             outputs:
