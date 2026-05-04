@@ -20,7 +20,7 @@ version: 2
 
 sources:
   - name: enla_raw
-    description: "Raw data sources for ENLA 2026 Callao project"
+    description: "Data sources for ENLA 2026 Callao project (created by Python ETL/Feature Engineering/ML)"
     # Hardcode database to fix BQ_PROJECT env var issue
     # Original: "{{ env_var('BQ_PROJECT', 'enla-2026-callao') }}"
     database: "enla-2026-callao"
@@ -29,26 +29,9 @@ sources:
     schema: "BI_ENLA"
 
     tables:
-      - name: enla_callao_raw
-        description: >
-          Raw data ingested from MongoDB.
-          NOTE: 'area' column = geographic zone (Rural/Urban), NOT academic area.
-          Academic areas are derived from EMA 2023 columns: M500_EM_2S_2023_CT/MA/CS
-        columns:
-          - name: id_ie
-            description: "Institution ID"
-            tests:
-              - not_null
-          - name: area
-            description: "Geographic zone: 'Rural' or 'Urban' (NOT academic area)"
-          - name: M500_EM_2S_2023_CT
-            description: "Lecture/Comunicación score (EMA 2023)"
-          - name: M500_EM_2S_2023_MA
-            description: "Matemática score (EMA 2023)"
-          - name: M500_EM_2S_2023_CS
-            description: "Ciencias Sociales score (EMA 2023)"
-          # NOTE: No CyT (Ciencia y Tecnología) data exists in the current Excel file
-
+      # NOTE: enla_callao_raw is a MongoDB collection, NOT a BigQuery table!
+      # The Python ETL reads from MongoDB and creates the tables below.
+      
       - name: fact_enla
         description: >
           Fact table with one row per student per academic area per year.

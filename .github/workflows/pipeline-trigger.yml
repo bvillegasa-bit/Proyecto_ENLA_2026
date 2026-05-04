@@ -1,13 +1,16 @@
 name: Trigger Full Pipeline
 
 # ONE-CLICK DEPLOYMENT: This workflow runs the complete pipeline:
-# 1. Python ETL (creates enla_callao_raw, fact_enla)
+# 1. Python ETL (reads from MongoDB enla_callao_raw, creates fact_enla + dimensions)
 # 2. Feature Engineering (creates enla_callao_features)
 # 3. ML Models (creates enla_callao_predictions_2026)
 # 4. dbt (creates views on top of the above tables)
 #
 # After this workflow completes, all tables and views will be ready.
 # No need to run dbt.yml separately!
+#
+# IMPORTANT: enla_callao_raw is a MongoDB collection (NOT a BigQuery table)
+# The ETL reads from MongoDB and creates BigQuery tables: fact_enla, dim_meta, dim_calendario
 
 on:
   workflow_dispatch:

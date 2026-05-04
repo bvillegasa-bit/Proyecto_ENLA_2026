@@ -2,8 +2,8 @@ name: Deploy dbt Models
 
 # NOTE: This workflow depends on tables created by Python pipeline
 # Run pipeline-trigger.yml or run-notebook.yml FIRST to create:
-# - enla_callao_raw (MongoDB → BigQuery, via src/etl/transform.py)
-# - fact_enla (ETL transformation, via src/etl/transform.py)
+# - fact_enla, dim_meta, dim_calendario (ETL transformation, via src/etl/transform.py)
+#   NOTE: enla_callao_raw is a MongoDB collection (NOT a BigQuery table)
 # - enla_callao_features (Feature engineering, via src/features/engineer.py)
 # - enla_callao_predictions_2026 (ML predictions, via src/models/predictor.py)
 #
@@ -80,28 +80,31 @@ jobs:
         env:
           GCP_SA_KEY: ${{ secrets.GCP_SA_KEY }}
         
-      - name: Check if source tables exist
-        run: |
-          echo "Checking if required source tables exist..."
-          BQ_PROJECT="${{ secrets.GCP_PROJECT_ID || 'enla-2026-callao' }}"
-          TABLES=("enla_callao_raw" "fact_enla" "enla_callao_features" "enla_callao_predictions_2026")
-          MISSING=0
-          for TABLE in "${TABLES[@]}"; do
-            if bq show --project_id="$BQ_PROJECT" --dataset_id=BI_ENLA "$TABLE" &>/dev/null; then
-              echo "✅ Table $TABLE exists"
-            else
-              echo "❌ Table $TABLE NOT FOUND - Run Python pipeline (pipeline-trigger.yml) first!"
-              MISSING=$((MISSING + 1))
-            fi
-          done
-          if [ $MISSING -gt 0 ]; then
-            echo ""
-            echo "⚠️ WARNING: $MISSING required source table(s) missing."
-            echo "Please run the Python pipeline first: .github/workflows/pipeline-trigger.yml"
-            echo "dbt will fail with 'Access Denied' errors if tables don't exist."
-          fi
-        env:
-          GCP_SA_KEY: ${{ secrets.GCP_SA_KEY }}
+       - name: Check if source tables exist
+         run: |
+           echo "Checking if required source tables exist..."
+           echo "NOTE: enla_callao_raw is a MongoDB collection, NOT a BigQuery table!"
+           echo "The ETL reads from MongoDB and creates the BigQuery tables below."
+           echo ""
+           BQ_PROJECT="${{ secrets.GCP_PROJECT_ID || 'enla-2026-callao' }}"
+           TABLES=("enla_callao_features" "enla_callao_predictions_2026")
+           MISSING=0
+           for TABLE in "${TABLES[@]}"; do
+             if bq show --project_id="$BQ_PROJECT" --dataset_id=BI_ENLA "$TABLE" &>/dev/null; then
+               echo "✅ Table $TABLE exists"
+             else
+               echo "❌ Table $TABLE NOT FOUND - Run Python pipeline (pipeline-trigger.yml) first!"
+               MISSING=$((MISSING + 1))
+             fi
+           done
+           if [ $MISSING -gt 0 ]; then
+             echo ""
+             echo "⚠️ WARNING: $MISSING required source table(s) missing."
+             echo "Please run the Python pipeline first: .github/workflows/pipeline-trigger.yml"
+             echo "dbt will fail with 'Access Denied' errors if tables don't exist."
+           fi
+         env:
+           GCP_SA_KEY: ${{ secrets.GCP_SA_KEY }}
         
       - name: Debug - Verify BQ_PROJECT before dbt run
         run: |
