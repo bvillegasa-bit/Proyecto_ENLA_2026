@@ -109,17 +109,17 @@ class TestYearlyAverages:
                                    sample_fact_df: pd.DataFrame):
         """Verify correct grouping and averaging for a single area."""
         result = feature_engineer.calculate_yearly_averages(
-            sample_fact_df, 'comunicacion'
+            sample_fact_df, 'comunicación'
         )
 
         assert len(result) == 3  # 3 unique institutions
         assert set(result.columns) == {'institution_id', 'nom_ie', 'avg_2021', 'avg_2022', 'avg_2023'}
 
     def test_averages_multi_section(self, feature_engineer: FeatureEngineer,
-                                    sample_fact_df: pd.DataFrame):
+                                     sample_fact_df: pd.DataFrame):
         """Verify that multiple sections are averaged correctly."""
         result = feature_engineer.calculate_yearly_averages(
-            sample_fact_df, 'comunicacion'
+            sample_fact_df, 'comunicación'
         )
 
         # IE001 2021: (70 + 80) / 2 = 75.0
@@ -127,10 +127,10 @@ class TestYearlyAverages:
         assert ie001_2021 == 75.0
 
     def test_missing_year_is_nan(self, feature_engineer: FeatureEngineer,
-                                 sample_fact_df: pd.DataFrame):
+                                  sample_fact_df: pd.DataFrame):
         """Verify that institutions missing a year get NaN for that year."""
         result = feature_engineer.calculate_yearly_averages(
-            sample_fact_df, 'comunicacion'
+            sample_fact_df, 'comunicación'
         )
 
         # IE003 has no 2022 data
@@ -138,10 +138,10 @@ class TestYearlyAverages:
         assert pd.isna(ie003_2022)
 
     def test_empty_area_returns_empty_df(self, feature_engineer: FeatureEngineer,
-                                         sample_fact_df: pd.DataFrame):
+                                          sample_fact_df: pd.DataFrame):
         """Verify that filtering a non-existent area returns empty DataFrame."""
         result = feature_engineer.calculate_yearly_averages(
-            sample_fact_df, 'matematica'  # No matematica data in sample
+            sample_fact_df, 'matemática'  # No matemática data in sample
         )
 
         assert result.empty
@@ -156,7 +156,7 @@ class TestYearlyAverages:
              'score': [70.0, np.nan, 80.0],
         })
 
-        result = feature_engineer.calculate_yearly_averages(df, 'comunicacion')
+        result = feature_engineer.calculate_yearly_averages(df, 'comunicación')
         # Should average only the two valid scores: (70 + 80) / 2 = 75.0
         assert result['avg_2021'].values[0] == 75.0
 
@@ -459,7 +459,7 @@ class TestEdgeCases:
              'score': [70.0, 70.0, 70.0],
         })
 
-        avg_df = feature_engineer.calculate_yearly_averages(df, 'comunicacion')
+        avg_df = feature_engineer.calculate_yearly_averages(df, 'comunicación')
         assert len(avg_df) == 1
         assert avg_df['avg_2021'].values[0] == 70.0
         assert avg_df['avg_2022'].values[0] == 70.0
@@ -483,7 +483,7 @@ class TestEdgeCases:
              'score': [60.0, 70.0, 80.0],
         })
 
-        avg_df = feature_engineer.calculate_yearly_averages(df, 'comunicacion')
+        avg_df = feature_engineer.calculate_yearly_averages(df, 'comunicación')
         assert len(avg_df) == 1
 
     def test_all_null_scores_for_area(self, feature_engineer: FeatureEngineer):
@@ -496,7 +496,7 @@ class TestEdgeCases:
              'score': [np.nan, np.nan, np.nan],
         })
 
-        result = feature_engineer.calculate_yearly_averages(df, 'comunicacion')
+        result = feature_engineer.calculate_yearly_averages(df, 'comunicación')
         assert result.empty
 
     def test_normalization_params_all_nan(self, feature_engineer: FeatureEngineer):
