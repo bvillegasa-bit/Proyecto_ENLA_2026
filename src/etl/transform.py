@@ -332,6 +332,27 @@ class ETLTransform:
             id_ie, id_seccion, nom_ie, nom_dre, year, area (geographic),
             cor_est, area_academica, score, grupo, peso, is_null_score, created_at
         """
+        # DEFENSIVE: Log columns to help debug KeyError issues
+        logger.info(f"Transform input columns: {list(raw_df.columns)}")
+        
+        # DEFENSIVE: Create case-insensitive column mapping
+        # This handles any case variation (ID_IE, id_ie, Id_Ie, etc.)
+        col_mapping = {col.lower(): col for col in raw_df.columns}
+        logger.info(f"Column mapping (lowercase -> original): {col_mapping}")
+        
+        def get_column(df, possible_names):
+            """Get column from DataFrame, trying multiple case variations."""
+            for name in possible_names:
+                if name in df.columns:
+                    return df[name]
+                # Also try case-insensitive match
+                lower_name = name.lower()
+                if lower_name in col_mapping:
+                    actual_col = col_mapping[lower_name]
+                    logger.info(f"Column '{name}' found as '{actual_col}' (case-insensitive match)")
+                    return df[actual_col]
+            raise KeyError(f"Column not found. Tried: {possible_names}. Available columns: {list(df.columns)}")
+        
         all_records = []
         
         for score_col, area_name in AREA_COLUMN_MAP.items():
@@ -347,16 +368,15 @@ class ETLTransform:
             scores = pd.to_numeric(raw_df[score_col], errors='coerce')
             
             # Create records for this academic area
-            # NOTE: Column names must match Excel exactly (case-sensitive)
-            # User's data: ID_IE (uppercase), id_seccion (lowercase in code was wrong)
+            # DEFENSIVE: Use helper function to handle case variations
             area_df = pd.DataFrame({
-                'id_ie': raw_df['ID_IE'],  # FIXED: Excel has ID_IE (uppercase)
-                'id_seccion': raw_df['ID_SECCION'],  # FIXED: Excel has ID_SECCION (uppercase)
-                'nom_ie': raw_df['nom_ie'] if 'nom_ie' in raw_df.columns else None,  # Optional: not in user's column list
-                'nom_dre': raw_df['nom_dre'] if 'nom_dre' in raw_df.columns else None,  # User has nom_dre
-                'year': raw_df['ano_evaluacion'] if 'ano_evaluacion' in raw_df.columns else 2023,  # Default to 2023 if not present
-                'area': raw_df['area'],  # Geographic zone (Rural/Urban) - user has 'area' (lowercase)
-                'cor_est': raw_df['cor_est'],  # Student identifier - user has 'cor_est' (lowercase)
+                'id_ie': get_column(raw_df, ['ID_IE', 'id_ie']),  # Try uppercase first
+                'id_seccion': get_column(raw_df, ['ID_SECCION', 'id_seccion']),  # Try uppercase first
+                'nom_ie': get_column(raw_df, ['nom_ie', 'NOM_IE']) if 'nom_ie' in col_mapping or 'NOM_IE' in raw_df.columns else None,
+                'nom_dre': get_column(raw_df, ['nom_dre', 'NOM_DRE']) if 'nom_dre' in col_mapping or 'NOM_DRE' in raw_df.columns else None,
+                'year': get_column(raw_df, ['ano_evaluacion', 'ANO_EVALUACION']) if 'ano_evaluacion' in col_mapping or 'ANO_EVALUACION' in raw_df.columns else 2023,
+                'area': get_column(raw_df, ['area', 'AREA']),  # Geographic zone (Rural/Urban)
+                'cor_est': get_column(raw_df, ['cor_est', 'COR_EST']),  # Student identifier
                 'area_academica': area_name,  # Academic area name
                 'score': scores,
                 'grupo': raw_df[grupo_col] if grupo_col in raw_df.columns else None,
