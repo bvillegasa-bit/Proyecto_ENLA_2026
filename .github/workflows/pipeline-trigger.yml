@@ -41,6 +41,15 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         
+      - name: Show current commit (DEBUG)
+        run: |
+          echo "=== GITHUB ACTIONS DEBUG INFO ==="
+          git log --oneline -1
+          git status
+          echo "Commit SHA: $(git rev-parse HEAD)"
+          echo "Branch/Ref: ${{ github.ref }}"
+          echo "Event: ${{ github.event_name }}"
+        
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
