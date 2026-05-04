@@ -34,9 +34,10 @@ class ENLAIngestor:
     """
     
     # Corrected schema: EMA 2023 columns + single cor_est (student ID)
-    # NOTE: "area" column = geographic zone (Rural/Urban), NOT academic area
+    # NOTE: Column names must match Excel EXACTLY (case-sensitive)
+    # User's Excel: ID_IE (uppercase), cod_DRE (mixed), cor_est (lowercase)
     REQUIRED_COLUMNS = {
-        'id_ie', 'id_seccion', 'nom_ie', 'nom_dre',
+        'ID_IE', 'ID_SECCION', 'nom_ie', 'nom_dre',  # FIXED: ID_IE/ID_SECCION uppercase
         'ano_evaluacion', 'grado_evaluacion',
         'cor_est', 'area',  # cor_est = student ID, area = geographic zone
         'M500_EM_2S_2023_CT', 'M500_EM_2S_2023_MA', 'M500_EM_2S_2023_CS',
@@ -44,7 +45,7 @@ class ENLAIngestor:
         'peso_CT', 'peso_MA', 'peso_CS'
     }
     
-    UPSERT_KEY = ['id_ie', 'id_seccion', 'ano_evaluacion']
+    UPSERT_KEY = ['ID_IE', 'ID_SECCION', 'ano_evaluacion']  # FIXED: uppercase to match Excel
     
     def __init__(
         self,
@@ -131,8 +132,10 @@ class ENLAIngestor:
                 logger.error(msg)
                 raise IngestionError(msg)
         
-        # Normalize column names to lowercase
-        df.columns = df.columns.str.lower().str.strip()
+        # NOTE: Preserve original column names (mixed case from Excel)
+        # User's Excel has: ID_IE (uppercase), cod_DRE (mixed case), cor_est (lowercase)
+        # Do NOT normalize to lowercase - use exact column names from Excel
+        df.columns = df.columns.str.strip()  # Only strip whitespace, preserve case
         
         return df
     

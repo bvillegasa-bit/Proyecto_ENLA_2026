@@ -347,14 +347,16 @@ class ETLTransform:
             scores = pd.to_numeric(raw_df[score_col], errors='coerce')
             
             # Create records for this academic area
+            # NOTE: Column names must match Excel exactly (case-sensitive)
+            # User's data: ID_IE (uppercase), id_seccion (lowercase in code was wrong)
             area_df = pd.DataFrame({
-                'id_ie': raw_df['id_ie'],
-                'id_seccion': raw_df['id_seccion'],
-                'nom_ie': raw_df['nom_ie'],
-                'nom_dre': raw_df['nom_dre'],
-                'year': raw_df['ano_evaluacion'],
-                'area': raw_df['area'],  # Geographic zone (Rural/Urban)
-                'cor_est': raw_df['cor_est'],  # Student identifier
+                'id_ie': raw_df['ID_IE'],  # FIXED: Excel has ID_IE (uppercase)
+                'id_seccion': raw_df['ID_SECCION'],  # FIXED: Excel has ID_SECCION (uppercase)
+                'nom_ie': raw_df['nom_ie'] if 'nom_ie' in raw_df.columns else None,  # Optional: not in user's column list
+                'nom_dre': raw_df['nom_dre'] if 'nom_dre' in raw_df.columns else None,  # User has nom_dre
+                'year': raw_df['ano_evaluacion'] if 'ano_evaluacion' in raw_df.columns else 2023,  # Default to 2023 if not present
+                'area': raw_df['area'],  # Geographic zone (Rural/Urban) - user has 'area' (lowercase)
+                'cor_est': raw_df['cor_est'],  # Student identifier - user has 'cor_est' (lowercase)
                 'area_academica': area_name,  # Academic area name
                 'score': scores,
                 'grupo': raw_df[grupo_col] if grupo_col in raw_df.columns else None,

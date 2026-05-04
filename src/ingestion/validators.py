@@ -22,9 +22,10 @@ class ENLAValidator:
     """Validator for ENLA data."""
     
     # Corrected schema: EMA 2023 columns + single cor_est (student ID)
-    # NOTE: "area" column = geographic zone (Rural/Urban), NOT academic area
+    # NOTE: Column names must match Excel EXACTLY (case-sensitive)
+    # User's Excel: ID_IE (uppercase), cod_DRE (mixed case), cor_est (lowercase)
     REQUIRED_COLUMNS = {
-        'id_ie', 'id_seccion', 'nom_ie', 'nom_dre',
+        'ID_IE', 'ID_SECCION', 'nom_ie', 'nom_dre',  # FIXED: ID_IE/ID_SECCION uppercase
         'ano_evaluacion', 'grado_evaluacion',
         'cor_est', 'area',  # cor_est = student ID, area = geographic zone
         'M500_EM_2S_2023_CT', 'M500_EM_2S_2023_MA', 'M500_EM_2S_2023_CS',
@@ -142,7 +143,8 @@ class ENLAValidator:
     def _validate_no_nulls(self, df: pd.DataFrame) -> List[str]:
         """Check critical columns for NULL values."""
         warnings = []
-        critical_cols = ['id_ie', 'id_seccion', 'ano_evaluacion'] + self.SCORE_COLUMNS
+        # FIXED: Use uppercase column names to match Excel
+        critical_cols = ['ID_IE', 'ID_SECCION', 'ano_evaluacion'] + self.SCORE_COLUMNS
         
         for col in critical_cols:
             if col in df.columns:
@@ -156,13 +158,14 @@ class ENLAValidator:
     def _validate_duplicates(self, df: pd.DataFrame) -> List[str]:
         """Identify duplicate rows based on key columns."""
         warnings = []
-        key_cols = ['id_ie', 'id_seccion', 'ano_evaluacion']
+        # FIXED: Use uppercase column names to match Excel
+        key_cols = ['ID_IE', 'ID_SECCION', 'ano_evaluacion']
         
         if all(col in df.columns for col in key_cols):
             duplicates = df.duplicated(subset=key_cols, keep=False)
             if duplicates.any():
                 dup_count = duplicates.sum()
-                msg = f"Found {dup_count} duplicate rows (by id_ie + id_seccion + ano_evaluacion)"
+                msg = f"Found {dup_count} duplicate rows (by ID_IE + ID_SECCION + ano_evaluacion)"
                 logger.warning(f"{msg} | duplicate_count={dup_count}")
                 warnings.append(msg)
         return warnings
