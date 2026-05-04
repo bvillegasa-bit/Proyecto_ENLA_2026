@@ -31,7 +31,7 @@ htmlcov/
 .tox/
 
 # Data (never commit real data)
-data/raw/*.xlsx
+# data/raw/*.xlsx  # Temporarily allowed for GitHub Actions pipeline access
 data/raw/*.csv
 data/processed/*.csv
 data/processed/*.parquet
