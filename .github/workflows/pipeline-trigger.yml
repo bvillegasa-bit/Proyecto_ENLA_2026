@@ -136,18 +136,48 @@ jobs:
         env:
           MONGODB_URI: ${{ secrets.MONGODB_URI }}
 
+      - name: Debug - Check MongoDB connection and data
+        run: |
+          echo "Checking MongoDB connection before ETL verification..."
+          python -c "
+          from src.database.mongo_client import MongoClientManager
+          import os
+          try:
+              client = MongoClientManager()
+              if client.test_connection():
+                  print('✅ MongoDB connection successful')
+                  from src.ingestion.config import settings
+                  collection = client.get_collection(settings.MONGODB_DB, settings.MONGODB_COLLECTION_RAW)
+                  count = collection.estimated_document_count()
+                  print(f'MongoDB documents found: {count}')
+                  if count > 0:
+                      sample = collection.find_one()
+                      if sample:
+                          print(f'Sample doc keys: {list(sample.keys())}')
+              else:
+                  print('❌ MongoDB connection failed')
+          except Exception as e:
+              print(f'❌ MongoDB error: {e}')
+          " || echo "⚠️ MongoDB debug check failed (non-blocking)"
+        env:
+          MONGODB_URI: ${{ secrets.MONGODB_URI }}
+        continue-on-error: true
+
       - name: Verify ETL tables exist
         run: |
           echo "Checking if ETL tables exist..."
-          bq show --project_id=${BQ_PROJECT} --dataset_id=BI_ENLA enla_callao_raw || {
-            echo "ERROR: enla_callao_raw table not found! ETL step may have failed."
+          echo "NOTE: enla_callao_raw is a MongoDB collection, NOT a BigQuery table!"
+          echo "The ETL creates: enla_callao_cleaned, fact_enla, dim_meta, dim_calendario"
+          echo ""
+          bq show --project_id=${BQ_PROJECT} --dataset_id=BI_ENLA enla_callao_cleaned || {
+            echo "ERROR: enla_callao_cleaned table not found! ETL step may have failed."
             exit 1
           }
           bq show --project_id=${BQ_PROJECT} --dataset_id=BI_ENLA fact_enla || {
             echo "ERROR: fact_enla table not found! ETL step may have failed."
             exit 1
           }
-          echo "✅ ETL tables verified"
+          echo "✅ ETL tables verified (enla_callao_cleaned, fact_enla)"
         env:
           BQ_PROJECT: ${{ vars.BQ_PROJECT || 'enla-2026-callao' }}
 
