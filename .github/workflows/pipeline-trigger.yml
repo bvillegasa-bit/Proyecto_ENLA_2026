@@ -40,8 +40,35 @@ jobs:
     
     steps:
       - uses: actions/checkout@v4
-        
-      - name: Show current commit (DEBUG)
+         with:
+           # CRITICAL: Ensure we get the LATEST commit, not a cached version
+           fetch-depth: 0
+         
+       - name: Debug - Show WHAT CODE IS ACTUALLY CHECKED OUT
+         run: |
+           echo "=== CRITICAL DEBUG: What version is running? ==="
+           echo "Commit SHA: $(git rev-parse HEAD)"
+           echo "Commit message: $(git log -1 --pretty=%B)"
+           echo "Branch/Ref: ${{ github.ref }}"
+           echo "Event name: ${{ github.event_name }}"
+           echo ""
+           echo "=== Checking if the fix is in the checked-out code ==="
+           echo "Searching for 'raw_df['ID_IE']' in transform.py..."
+           grep -n "raw_df\['ID_IE'\]" src/etl/transform.py && echo "✅ FIX FOUND: Code has ID_IE (uppercase)" || echo "❌ ERROR: Fix NOT found in checked-out code!"
+           echo ""
+           echo "=== Searching for OLD broken code (id_ie lowercase) ==="
+           grep -n "raw_df\['id_ie'\]" src/etl/transform.py && echo "❌ FOUND OLD CODE: This is the bug!" || echo "✅ GOOD: No old code with lowercase id_ie"
+           echo ""
+           echo "=== Showing transform.py lines 345-360 (what the workflow will actually run) ==="
+           cat src/etl/transform.py | head -360 | tail -20
+           echo ""
+           echo "=== Full git log (last 5 commits) ==="
+           git log --oneline -5
+           echo ""
+           echo "=== CHECK THIS: If commit is OLDER than bd5a33d, you're not running latest! ==="
+           echo "=== SOLUTION: Use 'Run workflow' button, NOT 'Re-run all jobs' ==="
+         
+       - name: Show current commit (DEBUG)
         run: |
           echo "=== GITHUB ACTIONS DEBUG INFO ==="
           git log --oneline -1
