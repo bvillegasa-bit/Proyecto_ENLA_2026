@@ -75,59 +75,154 @@ jobs:
           # Explicitly pass secrets again at step level
           MONGODB_URI: ${{ secrets.MONGODB_URI }}
 
-      - name: Trigger Pipeline
+      - name: Run ETL Pipeline
+        id: etl_step
         run: |
           python -c "
           from src.etl.transform import run_etl_pipeline
-          from src.features.engineer import run_feature_pipeline
-          from src.models.trainer import ModelTrainer
-          from src.models.predictor import ENLAPredictor
-          from src.alerting.email_alert import AlertManager
           import os
           
           # Debug: check if MongoDB URI is available
           mongodb_uri = os.environ.get('MONGODB_URI')
           if not mongodb_uri:
               print('ERROR: MONGODB_URI not found in environment')
-              print('Available env vars with MONGODB:', [k for k in os.environ.keys() if 'MONGO' in k.upper()])
-              raise ValueError('MONGODB_URI not provided')
+              exit(1)
           else:
               print(f'OK: MONGODB_URI found (length: {len(mongodb_uri)})')
-          
-          os.environ['GOOGLE_APPLICATION_CREDENTIALS'] = os.environ.get('GOOGLE_GHA_CREDS_PATH', '')
           
           # ETL
           etl_result = run_etl_pipeline()
           print(f'ETL: {etl_result.status}')
+          if etl_result.status != 'success':
+              print('ERROR: ETL failed!')
+              exit(1)
+          "
+        env:
+          MONGODB_URI: ${{ secrets.MONGODB_URI }}
+
+      - name: Verify ETL tables exist
+        run: |
+          echo "Checking if ETL tables exist..."
+          bq show --project_id=${BQ_PROJECT} --dataset_id=BI_ENLA enla_callao_raw || {
+            echo "ERROR: enla_callao_raw table not found! ETL step may have failed."
+            exit 1
+          }
+          bq show --project_id=${BQ_PROJECT} --dataset_id=BI_ENLA fact_enla || {
+            echo "ERROR: fact_enla table not found! ETL step may have failed."
+            exit 1
+          }
+          echo "✅ ETL tables verified"
+        env:
+          BQ_PROJECT: ${{ vars.BQ_PROJECT || 'enla-2026-callao' }}
+
+      - name: Run Feature Engineering
+        id: feature_step
+        run: |
+          python -c "
+          from src.features.engineer import run_feature_pipeline
+          import os
           
           # Features
           feat_result = run_feature_pipeline()
           print(f'Features: {feat_result.status}')
-          
-          # Models (train + predict)
+          if feat_result.status != 'success':
+              print('ERROR: Feature engineering failed!')
+              exit(1)
+          "
+
+      - name: Verify Features table exists
+        run: |
+          echo "Checking if enla_callao_features exists..."
+          bq show --project_id=${BQ_PROJECT} --dataset_id=BI_ENLA enla_callao_features || {
+            echo "ERROR: enla_callao_features table not found! Feature step may have failed."
+            exit 1
+          }
+          echo "✅ Features table verified"
+        env:
+          BQ_PROJECT: ${{ vars.BQ_PROJECT || 'enla-2026-callao' }}
+
+      - name: Run ML Training
+        id: training_step
+        run: |
+          python -c "
+          from src.models.trainer import ModelTrainer
           from src.database.bigquery_client import get_bq_client
+          import os
+          
           bq_client = get_bq_client()
           
           trainer = ModelTrainer(bigquery_client=bq_client, project_id=os.environ.get('GCP_PROJECT_ID'), dataset_id='BI_ENLA')
           trainer.train_all_models()
+          print('Training: completed')
+          "
+
+      - name: Run ML Predictions (CRITICAL - creates enla_callao_predictions_2026)
+        id: prediction_step
+        run: |
+          python -c "
+          from src.models.predictor import ENLAPredictor
+          from src.database.bigquery_client import get_bq_client
+          import os
+          
+          bq_client = get_bq_client()
           
           predictor = ENLAPredictor(bigquery_client=bq_client, project_id=os.environ.get('GCP_PROJECT_ID'), dataset_id='BI_ENLA')
           pred_result = predictor.run_full_prediction_pipeline()
           print(f'Predictions: {pred_result.status}')
+          if pred_result.status != 'success':
+              print(f'ERROR: Predictions failed! Errors: {pred_result.errors}')
+              exit(1)
+          print('✅ Predictions completed successfully')
+          "
+        env:
+          MONGODB_URI: ${{ secrets.MONGODB_URI }}
+
+      - name: Verify enla_callao_predictions_2026 exists (CRITICAL CHECK)
+        run: |
+          echo "========================================="
+          echo "CRITICAL CHECK: Verifying predictions table"
+          echo "========================================="
+          bq show --project_id=${BQ_PROJECT} --dataset_id=BI_ENLA enla_callao_predictions_2026 || {
+            echo "❌ ERROR: Table enla_callao_predictions_2026 NOT FOUND!"
+            echo "   The ML prediction step may have failed silently."
+            echo "   dbt will fail if we continue."
+            echo ""
+            echo "Debugging info:"
+            echo "- Check if models were trained: bq ls ${BQ_PROJECT}:BI_ENLA | grep enla_model"
+            echo "- Check Python logs above for prediction errors"
+            exit 1
+          }
+          echo "✅ enla_callao_predictions_2026 table verified - proceeding to dbt"
+          # Show row count for verification
+          bq query --project_id=${BQ_PROJECT} --use_legacy_sql=false "SELECT COUNT(*) as row_count FROM \`${BQ_PROJECT}.BI_ENLA.enla_callao_predictions_2026\`"
+        env:
+          BQ_PROJECT: ${{ vars.BQ_PROJECT || 'enla-2026-callao' }}
+
+      - name: Run Alerts (non-blocking)
+        if: always()
+        run: |
+          python -c "
+          from src.alerting.email_alert import AlertManager
+          from src.database.bigquery_client import get_bq_client
+          import os
           
-          # Alerts
+          bq_client = get_bq_client()
+          
           alerter = AlertManager(bigquery_client=bq_client, project_id=os.environ.get('GCP_PROJECT_ID'), dataset_id='BI_ENLA')
           alert_result = alerter.trigger_alerts()
           print(f'Alerts: {alert_result.status}')
           "
+        continue-on-error: true
         env:
-          # Pass critical secrets at step level too
           MONGODB_URI: ${{ secrets.MONGODB_URI }}
+          SENDGRID_API_KEY: ${{ secrets.SENDGRID_API_KEY }}
 
       - name: Install dbt
+        if: steps.prediction_step.outcome == 'success'
         run: pip install dbt-bigquery==1.5.0
 
       - name: Configure dbt profile
+        if: steps.prediction_step.outcome == 'success'
         run: |
           mkdir -p ~/.dbt
           cat > ~/.dbt/profiles.yml << EOF
@@ -149,18 +244,21 @@ jobs:
           DBT_DATASET_ID: "BI_ENLA"
 
       - name: Debug - Show profiles.yml content
+        if: steps.prediction_step.outcome == 'success'
         run: |
           echo "=== profiles.yml content ==="
           cat ~/.dbt/profiles.yml
           echo "=== End profiles.yml ==="
 
       - name: Create BigQuery dataset if not exists
+        if: steps.prediction_step.outcome == 'success'
         run: |
           bq mk --dataset --location=southamerica-east1 ${{ vars.BQ_PROJECT || 'enla-2026-callao' }}:BI_ENLA || echo "Dataset already exists or creation skipped"
         env:
           GCP_SA_KEY: ${{ secrets.GCP_SA_KEY }}
 
-      - name: Run dbt models
+      - name: Run dbt models (depends on enla_callao_predictions_2026)
+        if: steps.prediction_step.outcome == 'success'
         working-directory: dbt
         env:
           BQ_PROJECT: ${{ vars.BQ_PROJECT || 'enla-2026-callao' }}
@@ -168,8 +266,32 @@ jobs:
         run: |
           echo "=== Running dbt after Python pipeline ==="
           echo "BQ_PROJECT: $BQ_PROJECT"
+          echo "Verifying enla_callao_predictions_2026 is accessible..."
+          bq query --project_id=${BQ_PROJECT} --use_legacy_sql=false "SELECT COUNT(*) as row_count FROM \`${BQ_PROJECT}.BI_ENLA.enla_callao_predictions_2026\`" || {
+            echo "❌ ERROR: Cannot access enla_callao_predictions_2026!"
+            echo "   dbt will fail. Aborting."
+            exit 1
+          }
           dbt deps
           dbt debug
           dbt run
           dbt test
           echo "✅ dbt models deployed successfully!"
+
+      - name: Pipeline Summary
+        if: always()
+        run: |
+          echo "========================================="
+          echo "PIPELINE EXECUTION SUMMARY"
+          echo "========================================="
+          echo "ETL Step: ${{ steps.etl_step.outcome || 'skipped' }}"
+          echo "Features Step: ${{ steps.feature_step.outcome || 'skipped' }}"
+          echo "Training Step: ${{ steps.training_step.outcome || 'skipped' }}"
+          echo "Prediction Step: ${{ steps.prediction_step.outcome || 'skipped' }}"
+          echo "dbt Step: ${{ steps.prediction_step.outcome == 'success' && 'will run' || 'skipped (predictions failed)' }}"
+          echo ""
+          if [ "${{ steps.prediction_step.outcome }}" != "success" ]; then
+            echo "❌ CRITICAL: Predictions table was NOT created!"
+            echo "   dbt was skipped to prevent errors."
+            echo "   Check the Python prediction step logs above."
+          fi
