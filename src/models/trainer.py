@@ -196,7 +196,6 @@ class ModelTrainer:
                 )
 
             bq_manager = self._get_bq_manager()
-            bq_manager.connect()
 
             # Build and execute training query
             training_query = self._build_training_query(area)
@@ -307,7 +306,6 @@ class ModelTrainer:
 
         try:
             bq_manager = self._get_bq_manager()
-            bq_manager.connect()
 
             # Get evaluation metrics
             eval_query = f"""
@@ -399,7 +397,6 @@ class ModelTrainer:
 
         try:
             bq_manager = self._get_bq_manager()
-            bq_manager.connect()
 
             weights_query = f"""
             SELECT *
@@ -439,7 +436,6 @@ class ModelTrainer:
 
         try:
             bq_manager = self._get_bq_manager()
-            bq_manager.connect()
 
             # Use INFORMATION_SCHEMA to check model existence
             check_query = f"""
@@ -480,7 +476,6 @@ class ModelTrainer:
 
         try:
             bq_manager = self._get_bq_manager()
-            bq_manager.connect()
 
             client = bq_manager.get_client()
             client.delete_model(model_name, not_found_ok=True)
