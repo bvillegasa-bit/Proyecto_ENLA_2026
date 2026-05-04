@@ -178,21 +178,38 @@ class ETLTransform:
             # Step 6: Load to BigQuery
             logger.info("Step 6: Loading data to BigQuery...")
             
-            # Fix: Convert ID columns from int64 to string for BigQuery
-            # BigQuery schema expects STRING for id_ie and id_seccion
-            # PyArrow cannot automatically convert int64 to string
-            id_columns = ['id_ie', 'id_seccion']
-            for col in id_columns:
-                # Convert in cleaned_df
-                if col in cleaned_df.columns:
-                    # Convert to string, replace 'nan' string with empty string
-                    cleaned_df[col] = cleaned_df[col].astype(str).replace('nan', '')
-                    logger.info(f"Converted {col} to string in cleaned_df (dtype: {cleaned_df[col].dtype})")
-                
-                # Convert in fact_df
-                if col in fact_df.columns:
-                    fact_df[col] = fact_df[col].astype(str).replace('nan', '')
-                    logger.info(f"Converted {col} to string in fact_df (dtype: {fact_df[col].dtype})")
+            # DEFINITIVE FIX: Convert ALL columns that BigQuery expects as STRING
+            # This prevents PyArrow TypeError for int64 -> string conversion
+            
+            # Debug: Print dtypes before conversion
+            logger.info("=== DataFrame dtypes BEFORE conversion ===")
+            logger.info(f"cleaned_df dtypes:\n{cleaned_df.dtypes}")
+            logger.info(f"fact_df dtypes:\n{fact_df.dtypes}")
+            logger.info(f"dim_meta_df dtypes:\n{dim_meta_df.dtypes}")
+            
+            # Function to convert columns based on BigQuery schema
+            def convert_string_columns(df, schema, df_name):
+                """Convert DataFrame columns to string if schema expects STRING."""
+                for field in schema:
+                    if field.field_type == 'STRING' and field.name in df.columns:
+                        if df[field.name].dtype == 'int64':
+                            logger.info(f"Converting {field.name} to string in {df_name} (dtype: {df[field.name].dtype})")
+                            # Convert to string, replace 'nan' string with empty string
+                            df[field.name] = df[field.name].astype(str).replace('nan', '')
+                            logger.info(f"  After conversion: {df[field.name].dtype}")
+                return df
+            
+            # Convert based on actual BigQuery schemas
+            cleaned_df = convert_string_columns(cleaned_df, ENLA_CALLAO_CLEANED_SCHEMA, 'cleaned_df')
+            fact_df = convert_string_columns(fact_df, FACT_ENLA_SCHEMA, 'fact_df')
+            dim_meta_df = convert_string_columns(dim_meta_df, DIM_META_SCHEMA, 'dim_meta_df')
+            dim_calendario_df = convert_string_columns(dim_calendario_df, DIM_CALENDARIO_SCHEMA, 'dim_calendario_df')
+            
+            # Debug: Print dtypes after conversion
+            logger.info("=== DataFrame dtypes AFTER conversion ===")
+            logger.info(f"cleaned_df dtypes:\n{cleaned_df.dtypes}")
+            logger.info(f"fact_df dtypes:\n{fact_df.dtypes}")
+            logger.info(f"dim_meta_df dtypes:\n{dim_meta_df.dtypes}")
             
             self.bq_manager.load_table_from_dataframe(
                 self.dataset_id, 'enla_callao_cleaned',
@@ -209,11 +226,6 @@ class ETLTransform:
             )
             tables_loaded.append('fact_enla')
             total_rows += len(fact_df)
-            
-            # Also convert id_ie in dim_meta_df to string
-            if 'id_ie' in dim_meta_df.columns:
-                dim_meta_df['id_ie'] = dim_meta_df['id_ie'].astype(str).replace('nan', '')
-                logger.info(f"Converted id_ie to string in dim_meta_df (dtype: {dim_meta_df['id_ie'].dtype})")
             
             self.bq_manager.load_table_from_dataframe(
                 self.dataset_id, 'dim_meta',
