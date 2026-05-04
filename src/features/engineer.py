@@ -465,7 +465,9 @@ class FeatureEngineer:
                 avg_df[raw_col] = np.nan
 
         # Step 6: Compute normalization parameters
-        norm_params = self.compute_normalization_params(avg_df, FEATURE_COLS)
+        # NOTE: Use pre-rename column names (avg_2023, not avg_score_2023) because rename happens in Step 7
+        raw_feature_cols = ['avg_2023', 'avg_2022', 'avg_2021', 'trend', 'variance']
+        norm_params = self.compute_normalization_params(avg_df, raw_feature_cols)
 
         # Store for later BigQuery insert
         self._norm_params_store[area] = norm_params
@@ -625,8 +627,9 @@ class FeatureEngineer:
                 df['created_at'] = datetime.now(timezone.utc)
 
                 # Ensure correct column order
+                # NOTE: BigQuery schema expects 'area_academica', not 'area'
                 expected_cols = [
-                    'feature_id', 'area', 'institution_id', 'nom_ie',
+                    'feature_id', 'area_academica', 'institution_id', 'nom_ie',
                     'avg_score_2023', 'avg_score_2022', 'avg_score_2021',
                     'trend', 'variance',
                     'target',
@@ -667,7 +670,13 @@ class FeatureEngineer:
 
             logger.info(f"Combined features: {len(combined_df)} rows across {result.areas_processed} areas")
 
-            # Step 4: Load to BigQuery
+            # Step 4: Load to BigQuery (skip if empty)
+            if combined_df.empty:
+                logger.warning("No features to load - combined DataFrame is empty, skipping BigQuery load")
+                result.status = "partial_success"
+                result.errors.append("No features generated - DataFrame is empty (likely no 2022 data in fact_enla)")
+                return result
+
             bq_manager = self._get_bq_manager()
             bq_manager.connect()
             bq_manager.create_dataset(self.dataset_id, location=settings.GCP_LOCATION)
