@@ -114,6 +114,41 @@ jobs:
           # Explicitly pass secrets again at step level
           MONGODB_URI: ${{ secrets.MONGODB_URI }}
 
+      - name: Ingest Excel files to MongoDB
+        id: ingest_step
+        run: |
+          python -c "
+          import glob
+          import os
+          from src.ingestion.ingest_enla import ingest_enla_xlsx
+          
+          # Get MongoDB URI from environment
+          mongodb_uri = os.environ.get('MONGODB_URI')
+          if not mongodb_uri:
+              print('ERROR: MONGODB_URI not found in environment')
+              exit(1)
+          
+          excel_files = glob.glob('data/raw/*.xlsx')
+          print(f'Found {len(excel_files)} Excel files: {excel_files}')
+          
+          if not excel_files:
+              print('WARNING: No Excel files found in data/raw/')
+              exit(0)
+          
+          for f in excel_files:
+              print(f'Ingesting: {f}')
+              try:
+                  result = ingest_enla_xlsx(f, mongodb_uri=mongodb_uri)
+                  print(f'Result: {result}')
+              except Exception as e:
+                  print(f'Error ingesting {f}: {e}')
+                  raise
+          
+          print('All Excel files ingested successfully!')
+          "
+        env:
+          MONGODB_URI: ${{ secrets.MONGODB_URI }}
+
       - name: Run ETL Pipeline
         id: etl_step
         run: |
