@@ -393,9 +393,6 @@ class FeatureEngineer:
         Returns:
             DataFrame with all features for the area
         """
-        if area not in AREAS:
-            raise FeatureEngineeringError(f"Invalid area '{area}'. Must be one of {AREAS}")
-
         logger.info(f"Starting feature engineering for area: {area}")
 
         # Step 1: Query data

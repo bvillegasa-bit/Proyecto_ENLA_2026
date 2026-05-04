@@ -440,10 +440,14 @@ class TestTargetGeneration:
 class TestEdgeCases:
     """Tests for edge cases and error handling."""
 
-    def test_invalid_area_raises_error(self, feature_engineer: FeatureEngineer):
-        """Verify that invalid area raises FeatureEngineeringError."""
-        with pytest.raises(FeatureEngineeringError):
-            feature_engineer.engineer_features_for_area('invalid_area')
+    def test_invalid_area_returns_empty(self, feature_engineer: FeatureEngineer):
+        """Verify that invalid area returns empty DataFrame (no error raised)."""
+        result = feature_engineer.engineer_features_for_area('invalid_area')
+        assert isinstance(result, pd.DataFrame)
+        assert len(result) == 0
+        # Verify expected columns exist in empty DataFrame
+        assert 'institution_id' in result.columns
+        assert 'area' in result.columns
 
     def test_all_same_scores(self, feature_engineer: FeatureEngineer):
         """Verify pipeline handles institutions with identical scores."""
