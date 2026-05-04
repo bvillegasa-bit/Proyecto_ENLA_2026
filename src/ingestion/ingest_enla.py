@@ -109,10 +109,19 @@ class ENLAIngestor:
             raise IngestionError(f"MongoDB connection failed: {e}")
     
     def _disconnect(self):
-        """Disconnect from MongoDB."""
+        """Disconnect from MongoDB.
+        
+        Note: We don't close the global singleton client here because
+        it's shared across multiple operations. Just release the reference.
+        """
         if self.client:
-            self.client.close()
-            logger.info("MongoDB connection closed")
+            # Don't close the global singleton client - it's managed by get_mongo_client()
+            # Setting to None releases our reference, connection stays open for reuse
+            self.client = None
+            self.db = None
+            self.mongo_collection = None
+            self.log_collection = None
+            logger.info("MongoDB reference released (connection pooled for reuse)")
     
     def read_excel(self, file_path: str, year: Optional[int] = None) -> pd.DataFrame:
         """
