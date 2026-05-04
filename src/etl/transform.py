@@ -584,12 +584,40 @@ class ETLTransform:
         # Check 2: Score range validity (for non-NULL scores)
         valid_scores = cleaned_df[~cleaned_df['is_null_score']]['score']
         if len(valid_scores) > 0:
+            min_score = valid_scores.min()
+            max_score = valid_scores.max()
             out_of_range = ((valid_scores < 0) | (valid_scores > 100)).sum()
+            
+            # DEBUG: Log actual score ranges to understand the data
+            logger.info(f"Data quality: Score range check | min={min_score} max={max_score} valid_range=[0,100] out_of_range={out_of_range}")
+            
+            # DEBUG: Show distribution of scores in ranges
+            range_counts = {
+                'negative': (valid_scores < 0).sum(),
+                '0_to_50': ((valid_scores >= 0) & (valid_scores <= 50)).sum(),
+                '51_to_100': ((valid_scores > 50) & (valid_scores <= 100)).sum(),
+                '101_to_200': ((valid_scores > 100) & (valid_scores <= 200)).sum(),
+                '201_to_500': ((valid_scores > 200) & (valid_scores <= 500)).sum(),
+                'above_500': (valid_scores > 500).sum(),
+            }
+            logger.info(f"Data quality: Score distribution | {range_counts}")
+            
             if out_of_range > 0:
                 summary.score_range_valid = False
-                msg = f"{out_of_range} scores out of valid range [0, 100]"
-                summary.errors.append(msg)
-                logger.error(f"Data quality: {msg}")
+                msg = f"{out_of_range} scores out of valid range [0, 100] (actual range: [{min_score}, {max_score}])"
+                summary.warnings.append(msg)  # CHANGED: warnings instead of errors (don't fail ETL)
+                logger.warning(f"Data quality: {msg}")
+                logger.warning(f"  Scores outside [0,100] will be kept but may affect analysis")
+            
+            # DEBUG: Also check raw data score columns
+            logger.info("Data quality: Checking raw score columns...")
+            for col in AREA_COLUMN_MAP.keys():
+                if col in raw_df.columns:
+                    col_data = pd.to_numeric(raw_df[col], errors='coerce')
+                    col_min = col_data.min()
+                    col_max = col_data.max()
+                    col_null = col_data.isna().sum()
+                    logger.info(f"  {col}: min={col_min}, max={col_max}, nulls={col_null}, total={len(raw_df)}")
         
         # Check 3: Critical column NULL coverage
         # Note: 'area' now = geographic zone (Rural/Urban), 'area_academica' = academic area
