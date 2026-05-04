@@ -524,11 +524,15 @@ class ETLTransform:
         
         for area_name, cols in area_columns.items():
             try:
-                scores = pd.to_numeric(raw_df[cols['measure']], errors='coerce')
+                # Handle comma as decimal separator (common in Latin American Excel files)
+                measure_raw = raw_df[cols['measure']].astype(str)
+                measure_clean = measure_raw.str.replace(',', '.', regex=False)
+                scores = pd.to_numeric(measure_clean, errors='coerce')
                 
                 # DEBUG: Print what column we're using
                 logger.info(f"Processing area '{area_name}', using score column: {cols['measure']}")
-                logger.info(f"  Sample scores: {list(scores[:3])}")
+                logger.info(f"  Sample raw values: {list(measure_raw[:3])}")
+                logger.info(f"  Sample cleaned scores: {list(scores[:3])}")
                 print(f"DEBUG: Processing {area_name}, column={cols['measure']}, scores={list(scores[:3])}", file=sys.stderr)
                 
                 area_df = pd.DataFrame({

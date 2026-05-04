@@ -438,7 +438,14 @@ class FeatureEngineer:
         avg_df = self.calculate_yearly_averages(raw_df, area)
 
         if avg_df.empty:
-            logger.warning(f"No valid averages for area '{area}' - this area may not have data in fact_enla")
+            # Enhanced debug logging
+            valid_scores_count = raw_df[raw_df['area_academica'] == area]['score'].notna().sum()
+            logger.warning(
+                f"No valid averages for area '{area}' - "
+                f"Total rows for area: {len(raw_df[raw_df['area_academica'] == area])}, "
+                f"Valid (non-NULL) scores: {valid_scores_count}, "
+                f"Years available: {sorted(raw_df[raw_df['area_academica'] == area]['year'].unique().tolist())}"
+            )
             # Return empty DataFrame with expected columns instead of failing
             return pd.DataFrame(columns=['id_ie', 'nom_ie', 'avg_2021', 'avg_2022', 'avg_2023', 'trend', 'variance',
                                          'raw_avg_score_2023', 'raw_avg_score_2022', 'raw_avg_score_2021',

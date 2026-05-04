@@ -53,7 +53,7 @@ def sample_fact_df() -> pd.DataFrame:
             'Colegio C', 'Colegio C',
         ],
         'year': [2021, 2021, 2022, 2022, 2023, 2021, 2022, 2023, 2021, 2023],
-        'area_academica': ['comunicacion'] * 10,
+        'area_academica': ['comunicación'] * 10,  # With accent to match actual data
         'score': [70.0, 80.0, 72.0, 78.0, 85.0, 60.0, 65.0, 55.0, 90.0, 95.0],
     })
 
@@ -65,7 +65,7 @@ def sample_fact_all_areas() -> pd.DataFrame:
     for ie_id, name in [('IE001', 'Colegio A'), ('IE002', 'Colegio B')]:
         for year in [2021, 2022, 2023]:
             for area in AREAS:
-                base = 70 if area == 'comunicacion' else 65
+                base = 70 if area == 'comunicación' else 65
                 records.append({
                     'id_ie': ie_id,
                     'nom_ie': name,
@@ -152,8 +152,8 @@ class TestYearlyAverages:
             'id_ie': ['IE001', 'IE001', 'IE001'],
             'nom_ie': ['Colegio A'] * 3,
             'year': [2021, 2021, 2021],
-            'area_academica': ['comunicacion'] * 3,
-            'score': [70.0, np.nan, 80.0],
+             'area_academica': ['comunicación'] * 3,  # With accent
+             'score': [70.0, np.nan, 80.0],
         })
 
         result = feature_engineer.calculate_yearly_averages(df, 'comunicacion')
@@ -455,8 +455,8 @@ class TestEdgeCases:
             'id_ie': ['IE001'] * 3,
             'nom_ie': ['Colegio A'] * 3,
             'year': [2021, 2022, 2023],
-            'area_academica': ['comunicacion'] * 3,
-            'score': [70.0, 70.0, 70.0],
+             'area_academica': ['comunicación'] * 3,  # With accent
+             'score': [70.0, 70.0, 70.0],
         })
 
         avg_df = feature_engineer.calculate_yearly_averages(df, 'comunicacion')
@@ -479,8 +479,8 @@ class TestEdgeCases:
             'id_ie': ['IE001'] * 3,
             'nom_ie': ['Colegio A'] * 3,
             'year': [2021, 2022, 2023],
-            'area_academica': ['comunicacion'] * 3,
-            'score': [60.0, 70.0, 80.0],
+             'area_academica': ['comunicación'] * 3,  # With accent
+             'score': [60.0, 70.0, 80.0],
         })
 
         avg_df = feature_engineer.calculate_yearly_averages(df, 'comunicacion')
@@ -492,8 +492,8 @@ class TestEdgeCases:
             'id_ie': ['IE001'] * 3,
             'nom_ie': ['Colegio A'] * 3,
             'year': [2021, 2022, 2023],
-            'area_academica': ['comunicacion'] * 3,
-            'score': [np.nan, np.nan, np.nan],
+             'area_academica': ['comunicación'] * 3,  # With accent
+             'score': [np.nan, np.nan, np.nan],
         })
 
         result = feature_engineer.calculate_yearly_averages(df, 'comunicacion')
