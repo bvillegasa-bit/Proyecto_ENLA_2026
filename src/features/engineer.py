@@ -575,7 +575,7 @@ class FeatureEngineer:
         for feature_name, (min_val, max_val) in norm_params.items():
             records.append({
                 'param_id': str(uuid.uuid4()),
-                'area': area,
+                'area_academica': area,  # NOTE: BigQuery schema expects 'area_academica', not 'area'
                 'feature_name': feature_name,
                 'min_value': min_val,
                 'max_value': max_val,
