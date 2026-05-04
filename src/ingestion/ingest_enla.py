@@ -302,7 +302,7 @@ class ENLAIngestor:
         Returns:
             Dict with insert/update counts
         """
-        if not self.mongo_collection:
+        if self.mongo_collection is None:
             raise IngestionError("MongoDB collection not initialized")
         
         counts = {
@@ -366,7 +366,7 @@ class ENLAIngestor:
             self.log_collection.insert_one(log_entry)
             logger.info(f"Ingestion logged to MongoDB audit trail | ingestion_id={self.ingestion_id}")
         except PyMongoError as e:
-            logger.error("Failed to log ingestion to MongoDB", error=str(e))
+            logger.error(f"Failed to log ingestion to MongoDB | error={str(e)}")
     
     def ingest(self, file_path: str,
                region: str = None,
