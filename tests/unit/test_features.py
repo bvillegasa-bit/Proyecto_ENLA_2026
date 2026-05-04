@@ -537,7 +537,7 @@ class TestSchemas:
         """Verify FEATURES_SCHEMA contains all required columns."""
         schema_cols = {field.name for field in FEATURES_SCHEMA}
         required_cols = {
-            'feature_id', 'area', 'institution_id', 'nom_ie',
+            'feature_id', 'area_academica', 'institution_id', 'nom_ie',
             'avg_score_2023', 'avg_score_2022', 'avg_score_2021',
             'trend', 'variance',
             'target',
@@ -551,7 +551,7 @@ class TestSchemas:
     def test_norm_params_schema_has_required_columns(self):
         """Verify NORM_PARAMS_SCHEMA contains all required columns."""
         schema_cols = {field.name for field in NORM_PARAMS_SCHEMA}
-        required_cols = {'param_id', 'area', 'feature_name', 'min_value', 'max_value', 'created_at'}
+        required_cols = {'param_id', 'area_academica', 'feature_name', 'min_value', 'max_value', 'created_at'}
 
         assert required_cols.issubset(schema_cols)
 

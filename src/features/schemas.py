@@ -12,12 +12,13 @@ from typing import List, Dict
 # ==========================================
 # enla_callao_features schema
 # Engineered features for ML model training
+# NOTE: "area_academica" = academic area (comunicacion/matematica/ccss), NOT geographic zone
 # ==========================================
 FEATURES_SCHEMA: List[SchemaField] = [
     SchemaField("feature_id", "STRING", mode="REQUIRED",
                 description="Unique UUID for this feature record"),
-    SchemaField("area", "STRING", mode="REQUIRED",
-                description="Subject area: comunicacion, matematica, ccss, cyt"),
+    SchemaField("area_academica", "STRING", mode="REQUIRED",
+                description="Academic area: comunicacion, matematica, ccss, cyt (NOT geographic zone)"),
     SchemaField("institution_id", "STRING", mode="REQUIRED",
                 description="Institution ID (id_ie)"),
     SchemaField("nom_ie", "STRING", mode="NULLABLE",
@@ -62,12 +63,13 @@ FEATURES_SCHEMA: List[SchemaField] = [
 # ==========================================
 # enla_feature_normalization_params schema
 # Parameters for reproducing normalization at inference time
+# NOTE: "area_academica" = academic area (comunicacion/matematica/ccss), NOT geographic zone
 # ==========================================
 NORM_PARAMS_SCHEMA: List[SchemaField] = [
     SchemaField("param_id", "STRING", mode="REQUIRED",
                 description="Unique UUID for this normalization parameter"),
-    SchemaField("area", "STRING", mode="REQUIRED",
-                description="Subject area: comunicacion, matematica, ccss, cyt"),
+    SchemaField("area_academica", "STRING", mode="REQUIRED",
+                description="Academic area: comunicacion, matematica, ccss, cyt (NOT geographic zone)"),
     SchemaField("feature_name", "STRING", mode="REQUIRED",
                 description="Feature name: avg_score_2023, avg_score_2022, avg_score_2021, trend, variance"),
     SchemaField("min_value", "FLOAT64", mode="NULLABLE",

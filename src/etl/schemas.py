@@ -47,13 +47,14 @@ ENLA_CALLAO_CLEANED_SCHEMA: List[SchemaField] = [
 # ==========================================
 # dim_meta schema
 # Institution metadata with performance targets per academic area per year
+# NOTE: "area_academica" = academic area (comunicacion/matematica/ccss), NOT geographic zone
 # ==========================================
 DIM_META_SCHEMA: List[SchemaField] = [
     SchemaField("meta_id", "STRING", mode="REQUIRED", description="Unique UUID for this meta record"),
     SchemaField("id_ie", "STRING", mode="REQUIRED", description="Institution ID"),
     SchemaField("nom_ie", "STRING", mode="NULLABLE", description="Institution name"),
     SchemaField("year", "INTEGER", mode="REQUIRED", description="Target year"),
-    SchemaField("area", "STRING", mode="REQUIRED", description="Academic area: comunicacion, matematica, ccss"),
+    SchemaField("area_academica", "STRING", mode="REQUIRED", description="Academic area: comunicacion, matematica, ccss (NOT geographic zone)"),
     SchemaField("target_score", "FLOAT64", mode="REQUIRED", description="Target score threshold (default 60.0)"),
     SchemaField("region", "STRING", mode="REQUIRED", description="Region name (CALLAO)"),
     SchemaField("created_at", "TIMESTAMP", mode="REQUIRED", description="Record creation timestamp"),

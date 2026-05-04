@@ -96,30 +96,37 @@ class ETLResult:
 AREA_PATTERNS = {
     'comunicacion': {
         'display_name': 'Comunicación',
-        'measure_patterns': [r'M500.*CT', r'medida.*L', r'M500.*L', r'.*500.*CT', r'.*500.*L'],
-        'group_patterns': [r'grupo.*CT', r'grupo.*L', r'.*grupo.*CT', r'.*grupo.*L'],
-        'weight_patterns': [r'peso.*CT', r'peso.*L'],
+        # 2023 format: M500_EM_2S_2023_CT (ends with CT)
+        # 2022 format: medida500_L (ends with L, may or may not have underscore)
+        'measure_patterns': [r'M500.*_CT$', r'^medida.*_L$', r'^medida.*L$', r'M500.*L$'],
+        'group_patterns': [r'grupo.*_CT$', r'^grupo.*_L$', r'^grupo.*L$'],
+        'weight_patterns': [r'^peso.*_CT$', r'^peso.*_L$', r'^pes_o.*_L$', r'^pes_o.*L$'],
         'required': True,  # OBLIGATORY area
     },
     'matematica': {
         'display_name': 'Matemática',
-        'measure_patterns': [r'M500.*MA', r'medida.*M', r'M500.*M', r'.*500.*MA', r'.*500.*M'],
-        'group_patterns': [r'grupo.*MA', r'grupo.*M', r'.*grupo.*MA', r'.*grupo.*M'],
-        'weight_patterns': [r'peso.*MA', r'peso.*M'],
+        # 2023 format: M500_EM_2S_2023_MA (ends with MA)
+        # 2022 format: medida500_M (ends with M, may or may not have underscore)
+        'measure_patterns': [r'M500.*_MA$', r'^medida.*_M$', r'^medida.*M$', r'M500.*M$'],
+        'group_patterns': [r'grupo.*_MA$', r'^grupo.*_M$', r'^grupo.*M$'],
+        'weight_patterns': [r'^peso.*_MA$', r'^peso.*_M$', r'^pes_o.*_M$', r'^pes_o.*M$'],
         'required': True,  # OBLIGATORY area
     },
     'ccss': {
         'display_name': 'Ciencias Sociales',
-        'measure_patterns': [r'M500.*CS', r'medida.*CN', r'M500.*CN', r'.*500.*CS', r'.*500.*CN'],
-        'group_patterns': [r'grupo.*CS', r'grupo.*CN', r'.*grupo.*CS', r'.*grupo.*CN'],
-        'weight_patterns': [r'peso.*CS', r'peso.*CN'],
+        # 2023 format: M500_EM_2S_2023_CS (ends with CS)
+        # 2022 format: medida500_CN (ends with CN, may or may not have underscore)
+        'measure_patterns': [r'M500.*_CS$', r'^medida.*_CN$', r'^medida.*CN$', r'M500.*CN$'],
+        'group_patterns': [r'grupo.*_CS$', r'^grupo.*_CN$', r'^grupo.*CN$'],
+        'weight_patterns': [r'^peso.*_CS$', r'^peso.*_CN$', r'^pes_o.*_CN$', r'^pes_o.*CN$'],
         'required': False,  # OPTIONAL area
     },
     'cyt': {
         'display_name': 'Ciencia y Tecnología',
-        'measure_patterns': [r'M500.*CY', r'.*500.*CY'],
-        'group_patterns': [r'grupo.*CY', r'.*grupo.*CY'],
-        'weight_patterns': [r'peso.*CY'],
+        # 2023 format: M500_EM_2S_2023_CY (ends with CY)
+        'measure_patterns': [r'M500.*_CY$'],
+        'group_patterns': [r'grupo.*_CY$'],
+        'weight_patterns': [r'^peso.*_CY$'],
         'required': False,  # OPTIONAL area
     }
 }
@@ -378,10 +385,12 @@ class ETLTransform:
         Args:
             raw_df: Raw DataFrame from MongoDB
             year: Year extracted from FILENAME
-            
+        
         Returns:
             DataFrame in long format
         """
+        import sys
+        print("DEBUG: Starting _transform_to_long_format", file=sys.stderr)
         logger.info(f"Transform input columns ({len(raw_df.columns)}): {list(raw_df.columns)[:20]}...")
         logger.info(f"Year parameter: {year}")
         
@@ -421,17 +430,23 @@ class ETLTransform:
         # ==========================================
         # DYNAMIC COLUMN DISCOVERY
         # ==========================================
-        area_columns = {}
+        area_columns = {}  # {area_name: {'measure': col, 'group': col, 'weight': col}}
+        import sys
         
         for area_name, patterns in AREA_PATTERNS.items():
             found_cols = {'measure': None, 'group': None, 'weight': None}
+            print(f"DEBUG: Processing area '{area_name}'", file=sys.stderr)
             
             # Search for measure column
             for col in raw_df.columns:
+                print(f"DEBUG:   Checking column '{col}' for area '{area_name}'", file=sys.stderr)
                 for pattern in patterns['measure_patterns']:
                     if re.search(pattern, col, re.IGNORECASE):
                         found_cols['measure'] = col
+                        print(f"DEBUG:     Found measure: {col} (pattern: {pattern})", file=sys.stderr)
                         break
+                if found_cols['measure']:
+                    break
                 if found_cols['measure']:
                     break
             
@@ -459,7 +474,8 @@ class ETLTransform:
                 logger.info(f"✓ Found '{area_name}': measure={found_cols['measure']}, group={found_cols['group']}, weight={found_cols['weight']}")
             else:
                 if patterns['required']:
-                    logger.warning(f"✗ REQUIRED area '{area_name}' NOT FOUND! measure={found_cols['measure']}, group={found_cols['group']}")
+                    logger.error(f"✗ REQUIRED area '{area_name}' NOT FOUND! measure={found_cols['measure']}, group={found_cols['group']}")
+                    raise ETLTransformError(f"REQUIRED area '{area_name}' not found in data. Available columns: {list(raw_df.columns)[:10]}")
                 else:
                     logger.info(f"- Optional area '{area_name}' not present (OK)")
         
@@ -473,9 +489,19 @@ class ETLTransform:
         # ==========================================
         all_records = []
         
+        # DEBUG: Print area_columns to understand what was discovered
+        logger.info(f"area_columns to process: {area_columns}")
+        import sys
+        print(f"DEBUG: area_columns = {area_columns}", file=sys.stderr)
+        
         for area_name, cols in area_columns.items():
             try:
                 scores = pd.to_numeric(raw_df[cols['measure']], errors='coerce')
+                
+                # DEBUG: Print what column we're using
+                logger.info(f"Processing area '{area_name}', using score column: {cols['measure']}")
+                logger.info(f"  Sample scores: {list(scores[:3])}")
+                print(f"DEBUG: Processing {area_name}, column={cols['measure']}, scores={list(scores[:3])}", file=sys.stderr)
                 
                 area_df = pd.DataFrame({
                     'id_ie': get_column(raw_df, ['ID_IE', 'id_ie']),
@@ -549,7 +575,7 @@ class ETLTransform:
             'id_ie': unique_combos['id_ie'],
             'nom_ie': unique_combos['nom_ie'],
             'year': unique_combos['year'].astype(int),
-            'area': unique_combos['area_academica'],
+            'area_academica': unique_combos['area_academica'],  # Academic area, NOT geographic zone
             'target_score': settings.TARGET_SCORE_THRESHOLD,
             'region': settings.ENLA_REGION,
             'created_at': datetime.now(timezone.utc),
@@ -625,7 +651,7 @@ class ETLTransform:
                 
                 if out_of_range > 0:
                     summary.score_range_valid = False
-                    summary.warnings.append(f"{out_of_range} scores out of range [0,100]")
+                    summary.warnings.append(f"{out_of_range} scores out of valid range [0,100]")
         
         # Check 3: Critical column NULL coverage
         critical_cols = ['id_ie', 'id_seccion', 'year', 'area_academica', 'cor_est']

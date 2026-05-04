@@ -208,10 +208,10 @@ class TestTrainAllModels:
         result = trainer.train_all_models()
 
         assert result.status == 'success'
-        assert result.models_trained == 4
+        assert result.models_trained == 3
         assert result.models_failed == 0
         assert result.is_success == True
-        assert len(result.results) == 4
+        assert len(result.results) == 3
 
     def test_train_all_models_partial_failure(self, trainer: ModelTrainer, mock_query_job):
         """Verify partial failure is handled correctly."""
@@ -228,7 +228,7 @@ class TestTrainAllModels:
         result = trainer.train_all_models()
 
         assert result.status == 'partial'
-        assert result.models_trained == 3
+        assert result.models_trained == 2
         assert result.models_failed == 1
         assert result.is_success == False
 

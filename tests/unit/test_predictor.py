@@ -201,8 +201,8 @@ class TestPredictAllAreas:
 
         results = predictor.predict_all_areas()
 
-        assert len(results) == 4
-        for area in ['comunicacion', 'matematica', 'ccss', 'cyt']:
+        assert len(results) == 3
+        for area in ['comunicacion', 'matematica', 'ccss']:
             assert area in results
             assert len(results[area]) == 1
 
@@ -225,7 +225,7 @@ class TestPredictAllAreas:
 
         results = predictor.predict_all_areas()
 
-        assert len(results) == 4
+        assert len(results) == 3
         assert not results['comunicacion'].empty
         assert results['ccss'].empty
 
@@ -423,7 +423,7 @@ class TestFullPredictionPipeline:
 
             assert result.status == 'success'
             assert result.is_success == True
-            assert result.areas_processed == 4
+            assert result.areas_processed == 3
             assert result.total_predictions == 4
 
     def test_run_full_pipeline_missing_models(self, predictor: ENLAPredictor):

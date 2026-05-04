@@ -489,8 +489,8 @@ class FeatureEngineer:
         meta_threshold = self.target_threshold
         avg_df = self.generate_target(avg_df, meta_threshold)
 
-        # Add area column
-        avg_df['area'] = area
+        # Add area_academica column (academic area, NOT geographic zone)
+        avg_df['area_academica'] = area
 
         logger.info(f"Feature engineering complete for area '{area}' | institutions={len(avg_df)}")
 

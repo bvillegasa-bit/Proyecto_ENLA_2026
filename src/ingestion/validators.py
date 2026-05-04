@@ -1,5 +1,6 @@
 """Data validation framework for ENLA ingestion."""
 
+import re
 from typing import List, Tuple, Dict, Any
 import pandas as pd
 import numpy as np
@@ -19,35 +20,62 @@ class ValidationReport:
 
 
 class ENLAValidator:
-    """Validator for ENLA data."""
+    """Validator for ENLA data.
     
-    # Corrected schema: EMA 2023 columns + single cor_est (student ID)
-    # NOTE: Column names must match Excel EXACTLY (case-sensitive)
-    # User's Excel: ID_IE (uppercase), cod_DRE (mixed case), cor_est (lowercase)
-    REQUIRED_COLUMNS = {
-        'ID_IE', 'ID_SECCION', 'nom_ie', 'nom_dre',  # FIXED: ID_IE/ID_SECCION uppercase
+    Uses DYNAMIC column discovery via regex patterns to handle
+    different years with DIFFERENT column naming conventions:
+    - 2023: M500_EM_2S_2023_CT, grupo_EM_2S_2023_CT, peso_CT
+    - 2022: medida500_L, grupo_L, pes_o_L
+    - etc.
+    """
+    
+    # Core columns that should be present in ALL years
+    CORE_COLUMNS = {
+        'ID_IE', 'ID_SECCION', 'nom_ie', 'nom_dre',
         'ano_evaluacion', 'grado_evaluacion',
         'cor_est', 'area',  # cor_est = student ID, area = geographic zone
-        'M500_EM_2S_2023_CT', 'M500_EM_2S_2023_MA', 'M500_EM_2S_2023_CS',
-        'grupo_EM_2S_2023_CT', 'grupo_EM_2S_2023_MA', 'grupo_EM_2S_2023_CS',
-        'peso_CT', 'peso_MA', 'peso_CS'
     }
     
-    # EMA 2023 score columns (3 academic areas, no 'cyt' data exists)
-    SCORE_COLUMNS = [
-        'M500_EM_2S_2023_CT',  # Comunicación/Lectura
-        'M500_EM_2S_2023_MA',  # Matemática
-        'M500_EM_2S_2023_CS',  # Ciencias Sociales
-    ]
+    # Academic area patterns for DYNAMIC column discovery
+    # Column names CHANGE per year - use regex patterns to find them
+    AREA_PATTERNS = {
+        'comunicacion': {
+            'measure_patterns': [r'M500.*(CT|L)$', r'M500.*(CT|L)[^_]*$', r'medida500.*(CT|L)$'],
+            'group_patterns': [r'grupo.*(CT|L)$', r'grupo.*(CT|L)[^_]*$'],
+            'weight_patterns': [r'peso.*(CT|L)$', r'pes_o.*(CT|L)$'],
+            'required': True,  # Obligatory area
+        },
+        'matematica': {
+            'measure_patterns': [r'M500.*(MA|M)$', r'M500.*(MA|M)[^_]*$', r'medida500.*(MA|M)$'],
+            'group_patterns': [r'grupo.*(MA|M)$', r'grupo.*(MA|M)[^_]*$'],
+            'weight_patterns': [r'peso.*(MA|M)$', r'pes_o.*(MA|M)$'],
+            'required': True,  # Obligatory area
+        },
+        'ccss': {
+            'measure_patterns': [r'M500.*(CS|CN)$', r'M500.*(CS|CN)[^_]*$', r'medida500.*(CS|CN)$'],
+            'group_patterns': [r'grupo.*(CS|CN)$', r'grupo.*(CS|CN)[^_]*$'],
+            'weight_patterns': [r'peso.*(CS|CN)$', r'pes_o.*(CS|CN)$'],
+            'required': False,  # Optional area
+        },
+        'cyt': {
+            'measure_patterns': [r'M500.*CY$', r'M500.*CY[^_]*$'],
+            'group_patterns': [r'grupo.*CY$', r'grupo.*CY[^_]*$'],
+            'weight_patterns': [r'peso.*CY$', r'pes_o.*CY$'],
+            'required': False,  # Optional area
+        },
+    }
     
     def __init__(self):
         """Initialize validator."""
         self.report = None
+        self._discovered_score_columns = []  # Will be populated during validation
     
     def validate(self, df: pd.DataFrame, region: str = 'CALLAO',
-                grado: int = 2) -> ValidationReport:
+                 grado: int = 2) -> ValidationReport:
         """
         Validate DataFrame against ENLA requirements.
+        
+        Uses DYNAMIC column discovery - does NOT require hardcoded column names.
         
         Args:
             df: DataFrame to validate
@@ -61,30 +89,26 @@ class ENLAValidator:
         warnings = []
         statistics = {}
         
-        # Step 1: Check required columns
-        errors.extend(self._validate_required_columns(df))
-        if errors:
-            self.report = ValidationReport(
-                is_valid=False,
-                errors=errors,
-                warnings=warnings,
-                statistics=statistics
-            )
-            return self.report
+        # Step 0: Discover actual column names in this year's data
+        self._discover_columns(df)
+        logger.info(f"Discovered score columns: {self._discovered_score_columns}")
         
-        # Step 2: Check data types
+        # Step1: Check required columns (only core columns - score columns are dynamic)
+        errors.extend(self._validate_required_columns(df))
+        
+        # Step2: Check data types
         errors.extend(self._validate_data_types(df))
         
-        # Step 3: Check score ranges
+        # Step3: Check score ranges
         errors.extend(self._validate_score_ranges(df))
         
-        # Step 4: Check for nulls
+        # Step4: Check for nulls
         warnings.extend(self._validate_no_nulls(df))
         
-        # Step 5: Check duplicates
+        # Step5: Check duplicates
         warnings.extend(self._validate_duplicates(df))
         
-        # Step 6: Compute statistics
+        # Step6: Compute statistics
         statistics = self._compute_statistics(df, errors, warnings)
         
         is_valid = len(errors) == 0
@@ -100,19 +124,43 @@ class ENLAValidator:
         
         return self.report
     
+    def _discover_columns(self, df: pd.DataFrame):
+        """Discover actual column names using regex patterns."""
+        self._discovered_score_columns = []
+        
+        for area_name, patterns in self.AREA_PATTERNS.items():
+            # Search for measure column (score)
+            for col in df.columns:
+                found = False
+                for pattern in patterns['measure_patterns']:
+                    if re.search(pattern, col, re.IGNORECASE):
+                        self._discovered_score_columns.append(col)
+                        logger.info(f"Found score column for '{area_name}': {col}")
+                        found = True
+                        break
+                if found:
+                    break
+    
     def _validate_required_columns(self, df: pd.DataFrame) -> List[str]:
-        """Check that all required columns exist."""
-        missing = self.REQUIRED_COLUMNS - set(df.columns)
+        """Check that core required columns exist (score columns are dynamic)."""
+        missing = self.CORE_COLUMNS - set(df.columns)
         if missing:
             msg = f"Missing required columns: {', '.join(sorted(missing))}"
             logger.error(msg)
             return [msg]
+        
+        # Also check that at least one score column was found
+        if not self._discovered_score_columns:
+            msg = f"No score columns found! Available columns: {list(df.columns)[:20]}"
+            logger.error(msg)
+            return [msg]
+        
         return []
     
     def _validate_data_types(self, df: pd.DataFrame) -> List[str]:
         """Verify that score columns are numeric."""
         errors = []
-        for col in self.SCORE_COLUMNS:
+        for col in self._discovered_score_columns:
             if col in df.columns:
                 # Try to convert to numeric
                 try:
@@ -126,7 +174,7 @@ class ENLAValidator:
     def _validate_score_ranges(self, df: pd.DataFrame) -> List[str]:
         """Ensure all scores are in [0, 100]."""
         errors = []
-        for col in self.SCORE_COLUMNS:
+        for col in self._discovered_score_columns:
             if col in df.columns:
                 # Convert to numeric
                 scores = pd.to_numeric(df[col], errors='coerce')
@@ -143,8 +191,8 @@ class ENLAValidator:
     def _validate_no_nulls(self, df: pd.DataFrame) -> List[str]:
         """Check critical columns for NULL values."""
         warnings = []
-        # FIXED: Use uppercase column names to match Excel
-        critical_cols = ['ID_IE', 'ID_SECCION', 'ano_evaluacion'] + self.SCORE_COLUMNS
+        # Core critical columns + discovered score columns
+        critical_cols = ['ID_IE', 'ID_SECCION', 'ano_evaluacion'] + self._discovered_score_columns
         
         for col in critical_cols:
             if col in df.columns:
@@ -158,7 +206,6 @@ class ENLAValidator:
     def _validate_duplicates(self, df: pd.DataFrame) -> List[str]:
         """Identify duplicate rows based on key columns."""
         warnings = []
-        # FIXED: Use uppercase column names to match Excel
         key_cols = ['ID_IE', 'ID_SECCION', 'ano_evaluacion']
         
         if all(col in df.columns for col in key_cols):
@@ -171,7 +218,7 @@ class ENLAValidator:
         return warnings
     
     def _compute_statistics(self, df: pd.DataFrame, errors: List[str],
-                           warnings: List[str]) -> Dict[str, Any]:
+                            warnings: List[str]) -> Dict[str, Any]:
         """Compute summary statistics."""
         stats = {
             'total_rows': len(df),
@@ -182,15 +229,15 @@ class ENLAValidator:
         
         # Null coverage (%)
         null_coverage = {}
-        for col in self.REQUIRED_COLUMNS:
+        for col in self.CORE_COLUMNS:
             if col in df.columns:
                 null_pct = (df[col].isna().sum() / len(df)) * 100
                 null_coverage[col] = round(null_pct, 2)
         stats['null_coverage_percent'] = null_coverage
         
-        # Score statistics
+        # Score statistics (using discovered columns)
         score_stats = {}
-        for col in self.SCORE_COLUMNS:
+        for col in self._discovered_score_columns:
             if col in df.columns:
                 scores = pd.to_numeric(df[col], errors='coerce')
                 score_stats[col] = {
