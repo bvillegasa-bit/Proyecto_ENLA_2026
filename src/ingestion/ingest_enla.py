@@ -345,7 +345,7 @@ class ENLAIngestor:
         Args:
             summary: Ingestion summary to log
         """
-        if self.log_collection is not None:
+        if self.log_collection is None:
             return
         
         log_entry = {

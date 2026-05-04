@@ -685,13 +685,14 @@ class ETLTransform:
             if len(valid_scores) > 0:
                 min_score = valid_scores.min()
                 max_score = valid_scores.max()
-                out_of_range = ((valid_scores < 0) | (valid_scores > 100)).sum()
+                # ENLA scores are 0-1000 scale, not percentage
+                out_of_range = ((valid_scores < 0) | (valid_scores > 1000)).sum()
                 
                 logger.info(f"Score range | min={min_score} max={max_score} out_of_range={out_of_range}")
                 
                 if out_of_range > 0:
                     summary.score_range_valid = False
-                    summary.warnings.append(f"{out_of_range} scores out of valid range [0,100]")
+                    summary.warnings.append(f"{out_of_range} scores out of valid range [0,1000]")
         
         # Check 3: Critical column NULL coverage
         critical_cols = ['id_ie', 'id_seccion', 'year', 'area_academica', 'cor_est']

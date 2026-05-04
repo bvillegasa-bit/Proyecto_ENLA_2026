@@ -440,7 +440,7 @@ class TestDataQualityCheck:
             'area': ['Urban'],  # Geographic zone
             'cor_est': ['EST001'],  # Student ID
             'area_academica': ['comunicación'],  # User said: WITH accent!
-            'score': [150.0],  # Out of range! (valid range is [0, 100])
+            'score': [1500.0],  # Out of range! (valid range is [0, 1000])
             'is_null_score': [False],
             'created_at': [datetime.now(timezone.utc)],
         })

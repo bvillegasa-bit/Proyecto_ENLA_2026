@@ -188,11 +188,11 @@ class ENLAValidator:
                 # Convert to numeric
                 scores = pd.to_numeric(df[col], errors='coerce')
                 
-                # Check ranges
-                invalid = ((scores < 0) | (scores > 100))
+                # Check ranges - ENLA scores are 0-1000 scale (not percentage)
+                invalid = ((scores < 0) | (scores > 1000))
                 if invalid.any():
                     invalid_count = invalid.sum()
-                    msg = f"Column '{col}': {invalid_count} values out of range [0, 100]"
+                    msg = f"Column '{col}': {invalid_count} values out of range [0, 1000]"
                     logger.error(f"{msg} | column={col} count={invalid_count}")
                     errors.append(msg)
         return errors
