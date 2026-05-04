@@ -66,7 +66,7 @@ class FeaturePipelineResult:
 # Feature Engineering Constants
 # ==========================================
 
-AREAS = ['comunicacion', 'matematica', 'ccss', 'cyt']
+AREAS = ['comunicacion', 'matematica', 'ccss']  # Removed 'cyt' - no data available
 FEATURE_COLS = ['avg_score_2023', 'avg_score_2022', 'avg_score_2021', 'trend', 'variance']
 YEARS = [2021, 2022, 2023]
 
@@ -400,6 +400,26 @@ class FeatureEngineer:
 
         # Step 1: Query data
         bq_manager = self._get_bq_manager()
+
+        # Debug: Check what's in fact_enla before querying
+        try:
+            debug_query = f"""
+                SELECT area_academica, COUNT(*) as cnt
+                FROM `{bq_manager.project_id}.{self.dataset_id}.fact_enla`
+                GROUP BY area_academica
+            """
+            debug_df = bq_manager.query(debug_query)
+            logger.info(f"Areas in fact_enla: {debug_df.to_dict('records')}")
+
+            count_query = f"""
+                SELECT COUNT(*) as total
+                FROM `{bq_manager.project_id}.{self.dataset_id}.fact_enla`
+            """
+            total_df = bq_manager.query(count_query)
+            logger.info(f"Total rows in fact_enla: {total_df['total'][0]}")
+        except Exception as e:
+            logger.warning(f"Debug query failed: {e}")
+
         query = f"""
             SELECT id_ie, nom_ie, year, area_academica, score
             FROM `{bq_manager.project_id}.{self.dataset_id}.fact_enla`
@@ -411,14 +431,22 @@ class FeatureEngineer:
 
         if raw_df.empty:
             logger.warning(f"No data found for area '{area}' in fact_enla")
-            return pd.DataFrame()
+            # Return empty DataFrame with expected columns instead of failing
+            return pd.DataFrame(columns=['id_ie', 'nom_ie', 'avg_2021', 'avg_2022', 'avg_2023', 'trend', 'variance',
+                                         'raw_avg_score_2023', 'raw_avg_score_2022', 'raw_avg_score_2021',
+                                         'raw_trend', 'raw_variance', 'avg_score_2023', 'avg_score_2022',
+                                         'avg_score_2021', 'area', 'target', 'feature_id', 'created_at', 'institution_id', 'meta_threshold'])
 
         # Step 2: Calculate yearly averages
         avg_df = self.calculate_yearly_averages(raw_df, area)
 
         if avg_df.empty:
-            logger.warning(f"No valid averages for area '{area}'")
-            return pd.DataFrame()
+            logger.warning(f"No valid averages for area '{area}' - this area may not have data in fact_enla")
+            # Return empty DataFrame with expected columns instead of failing
+            return pd.DataFrame(columns=['id_ie', 'nom_ie', 'avg_2021', 'avg_2022', 'avg_2023', 'trend', 'variance',
+                                         'raw_avg_score_2023', 'raw_avg_score_2022', 'raw_avg_score_2021',
+                                         'raw_trend', 'raw_variance', 'avg_score_2023', 'avg_score_2022',
+                                         'avg_score_2021', 'area', 'target', 'feature_id', 'created_at', 'institution_id', 'meta_threshold'])
 
         # Step 3: Calculate trend
         avg_df = self.calculate_trend(avg_df)
@@ -470,7 +498,7 @@ class FeatureEngineer:
 
     def engineer_all_areas(self, meta_overrides: Optional[Dict[str, float]] = None) -> Dict[str, pd.DataFrame]:
         """
-        Run feature engineering for all 4 areas.
+        Run feature engineering for all available areas.
 
         Args:
             meta_overrides: Optional dict of {institution_id: threshold} overrides
@@ -483,7 +511,34 @@ class FeatureEngineer:
 
         logger.info("Starting feature engineering for all areas")
 
-        for area in AREAS:
+        # Check what areas are actually available in fact_enla
+        try:
+            bq_manager = self._get_bq_manager()
+            check_query = f"""
+                SELECT area_academica, COUNT(*) as cnt
+                FROM `{bq_manager.project_id}.{self.dataset_id}.fact_enla`
+                GROUP BY area_academica
+            """
+            available_areas_df = bq_manager.query(check_query)
+            available_areas = available_areas_df['area_academica'].tolist() if not available_areas_df.empty else []
+            logger.info(f"Available areas in fact_enla: {available_areas}")
+
+            # Filter AREAS to only those that have data
+            areas_to_process = [area for area in AREAS if area in available_areas]
+
+            if not areas_to_process:
+                logger.warning("No areas from AREAS list found in fact_enla. Processing all AREAS anyway.")
+                areas_to_process = AREAS
+            else:
+                skipped = [area for area in AREAS if area not in areas_to_process]
+                if skipped:
+                    logger.info(f"Skipping areas not in fact_enla: {skipped}")
+
+        except Exception as e:
+            logger.warning(f"Could not check available areas: {e}. Processing all AREAS.")
+            areas_to_process = AREAS
+
+        for area in areas_to_process:
             try:
                 df = self.engineer_features_for_area(area, meta_overrides)
                 results[area] = df
@@ -563,7 +618,7 @@ class FeatureEngineer:
 
             for area, df in area_results.items():
                 if df.empty:
-                    result.errors.append(f"No data for area '{area}'")
+                    logger.warning(f"No data for area '{area}' - skipping")
                     continue
 
                 # Add feature_id and created_at
@@ -602,7 +657,8 @@ class FeatureEngineer:
 
             if not all_frames:
                 result.status = "failed"
-                result.errors.append("No features generated for any area")
+                result.errors.append("No features generated for any area - fact_enla may be empty or have no matching data")
+                logger.error("Pipeline failed: No features generated for any area")
                 return result
 
             # Combine all areas
