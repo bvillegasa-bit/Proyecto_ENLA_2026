@@ -178,6 +178,22 @@ class ETLTransform:
             # Step 6: Load to BigQuery
             logger.info("Step 6: Loading data to BigQuery...")
             
+            # Fix: Convert ID columns from int64 to string for BigQuery
+            # BigQuery schema expects STRING for id_ie and id_seccion
+            # PyArrow cannot automatically convert int64 to string
+            id_columns = ['id_ie', 'id_seccion']
+            for col in id_columns:
+                # Convert in cleaned_df
+                if col in cleaned_df.columns:
+                    # Convert to string, replace 'nan' string with empty string
+                    cleaned_df[col] = cleaned_df[col].astype(str).replace('nan', '')
+                    logger.info(f"Converted {col} to string in cleaned_df (dtype: {cleaned_df[col].dtype})")
+                
+                # Convert in fact_df
+                if col in fact_df.columns:
+                    fact_df[col] = fact_df[col].astype(str).replace('nan', '')
+                    logger.info(f"Converted {col} to string in fact_df (dtype: {fact_df[col].dtype})")
+            
             self.bq_manager.load_table_from_dataframe(
                 self.dataset_id, 'enla_callao_cleaned',
                 cleaned_df, write_disposition='WRITE_TRUNCATE',
@@ -193,6 +209,11 @@ class ETLTransform:
             )
             tables_loaded.append('fact_enla')
             total_rows += len(fact_df)
+            
+            # Also convert id_ie in dim_meta_df to string
+            if 'id_ie' in dim_meta_df.columns:
+                dim_meta_df['id_ie'] = dim_meta_df['id_ie'].astype(str).replace('nan', '')
+                logger.info(f"Converted id_ie to string in dim_meta_df (dtype: {dim_meta_df['id_ie'].dtype})")
             
             self.bq_manager.load_table_from_dataframe(
                 self.dataset_id, 'dim_meta',
