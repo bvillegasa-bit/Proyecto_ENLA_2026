@@ -4,9 +4,15 @@ This module handles the transformation of raw ENLA data from MongoDB's wide form
 (one row per institution with all area scores) to BigQuery's long format
 (one row per institution per area), along with dimension table creation
 and data quality validation.
+
+DYNAMIC COLUMN SUPPORT:
+- Column names CHANGE per year (2021, 2022, 2023 have different formats)
+- Year is extracted from FILENAME (not in Excel data)
+- Pattern matching used to discover actual column names in each year's data
 """
 
 import uuid
+import re
 from datetime import datetime, timezone
 from typing import List, Dict, Any, Tuple, Optional
 from dataclasses import dataclass, field
@@ -82,21 +88,44 @@ class ETLResult:
 
 
 # ==========================================
-# Area Mapping Configuration
+# Area Patterns Configuration (Module Level)
 # ==========================================
 
-# EMA 2023 column mappings: Excel column -> academic area name
-# Note: "area" column in Excel = geographic zone (Rural/Urban), NOT academic area
-AREA_COLUMN_MAP: Dict[str, str] = {
-    'M500_EM_2S_2023_CT': 'comunicacion',  # Comunicación/Lectura
-    'M500_EM_2S_2023_MA': 'matematica',    # Matemática
-    'M500_EM_2S_2023_CS': 'ccss',          # Ciencias Sociales
+# Academic area patterns for DYNAMIC column discovery
+# Column names CHANGE per year - we use regex to discover actual column names
+AREA_PATTERNS = {
+    'comunicacion': {
+        'display_name': 'Comunicación',
+        'measure_patterns': [r'M500.*CT', r'medida.*L', r'M500.*L', r'.*500.*CT', r'.*500.*L'],
+        'group_patterns': [r'grupo.*CT', r'grupo.*L', r'.*grupo.*CT', r'.*grupo.*L'],
+        'weight_patterns': [r'peso.*CT', r'peso.*L'],
+        'required': True,  # OBLIGATORY area
+    },
+    'matematica': {
+        'display_name': 'Matemática',
+        'measure_patterns': [r'M500.*MA', r'medida.*M', r'M500.*M', r'.*500.*MA', r'.*500.*M'],
+        'group_patterns': [r'grupo.*MA', r'grupo.*M', r'.*grupo.*MA', r'.*grupo.*M'],
+        'weight_patterns': [r'peso.*MA', r'peso.*M'],
+        'required': True,  # OBLIGATORY area
+    },
+    'ccss': {
+        'display_name': 'Ciencias Sociales',
+        'measure_patterns': [r'M500.*CS', r'medida.*CN', r'M500.*CN', r'.*500.*CS', r'.*500.*CN'],
+        'group_patterns': [r'grupo.*CS', r'grupo.*CN', r'.*grupo.*CS', r'.*grupo.*CN'],
+        'weight_patterns': [r'peso.*CS', r'peso.*CN'],
+        'required': False,  # OPTIONAL area
+    },
+    'cyt': {
+        'display_name': 'Ciencia y Tecnología',
+        'measure_patterns': [r'M500.*CY', r'.*500.*CY'],
+        'group_patterns': [r'grupo.*CY', r'.*grupo.*CY'],
+        'weight_patterns': [r'peso.*CY'],
+        'required': False,  # OPTIONAL area
+    }
 }
 
 AREA_DISPLAY_NAMES: Dict[str, str] = {
-    'comunicacion': 'Comunicación',
-    'matematica': 'Matemática',
-    'ccss': 'Ciencias Sociales',
+    area: config['display_name'] for area, config in AREA_PATTERNS.items()
 }
 
 
@@ -109,10 +138,15 @@ class ETLTransform:
     
     Transforms raw MongoDB data into BigQuery fact and dimension tables:
     1. Extract: Query MongoDB enla_callao_raw collection
-    2. Transform: Pivot wide format → long format by area
+    2. Transform: Pivot wide format → long format by area (DYNAMIC column discovery)
     3. Create dimensions: dim_meta, dim_calendario
     4. Load: Insert to BigQuery tables
     5. Validate: Data quality checks
+    
+    KEY CHANGES (2026-05-03):
+    - Column names discovered DYNAMICALLY (vary by year: 2021/2022/2023)
+    - Year extracted from FILENAME (not in Excel data)
+    - Optional areas (ccss, cyt) handled gracefully
     """
     
     def __init__(self, mongodb_uri: Optional[str] = None,
@@ -130,11 +164,14 @@ class ETLTransform:
         self.bq_manager = BigQueryClientManager(gcp_project_id, gcp_credentials_path)
         self.dataset_id = settings.GCP_DATASET_ID
         
-        logger.info(f"ETLTransform initialized | dataset_id={self.dataset_id} area_count={len(AREA_COLUMN_MAP)}")
+        logger.info(f"ETLTransform initialized | dataset_id={self.dataset_id}")
     
-    def run_full_pipeline(self) -> ETLResult:
+    def run_full_pipeline(self, year: Optional[int] = None) -> ETLResult:
         """
         Execute the complete ETL pipeline.
+        
+        Args:
+            year: Optional year filter (if None, processes all years from data)
         
         Returns:
             ETLResult with execution status, data quality summary, and metadata
@@ -146,16 +183,31 @@ class ETLTransform:
         try:
             logger.info("=" * 60)
             logger.info("Starting ETL Pipeline: MongoDB → BigQuery")
+            if year:
+                logger.info(f"Filtering to year: {year}")
             logger.info("=" * 60)
             
             # Step 1: Connect to MongoDB and extract data
             logger.info("Step 1: Extracting data from MongoDB...")
-            raw_df = self._extract_from_mongodb()
+            raw_df = self._extract_from_mongodb(year=year)
+            
+            if len(raw_df) == 0:
+                msg = f"No data found for year={year}" if year else "No data found in MongoDB"
+                logger.warning(msg)
+                return ETLResult(
+                    success=True,
+                    data_quality=DataQualitySummary(),
+                    tables_loaded=[],
+                    total_rows_loaded=0,
+                    execution_time_seconds=(datetime.now(timezone.utc) - start_time).total_seconds(),
+                    error_message=msg,
+                )
+            
             logger.info(f"Extracted {len(raw_df)} rows from MongoDB")
             
-            # Step 2: Transform wide → long format
+            # Step 2: Transform wide → long format (DYNAMIC column discovery)
             logger.info("Step 2: Transforming data (wide → long format)...")
-            cleaned_df = self._transform_to_long_format(raw_df)
+            cleaned_df = self._transform_to_long_format(raw_df, year=year)
             logger.info(f"Transformed to {len(cleaned_df)} rows (long format)")
             
             # Step 3: Create fact_enla records
@@ -166,7 +218,7 @@ class ETLTransform:
             # Step 4: Create dimension tables
             logger.info("Step 4: Creating dimension tables...")
             dim_meta_df = self._create_dim_meta(cleaned_df)
-            dim_calendario_df = self._create_dim_calendario(raw_df)
+            dim_calendario_df = self._create_dim_calendario(cleaned_df)
             logger.info(f"Created dim_meta: {len(dim_meta_df)} rows, "
                        f"dim_calendario: {len(dim_calendario_df)} rows")
             
@@ -178,38 +230,20 @@ class ETLTransform:
             # Step 6: Load to BigQuery
             logger.info("Step 6: Loading data to BigQuery...")
             
-            # DEFINITIVE FIX: Convert ALL columns that BigQuery expects as STRING
-            # This prevents PyArrow TypeError for int64 -> string conversion
-            
-            # Debug: Print dtypes before conversion
-            logger.info("=== DataFrame dtypes BEFORE conversion ===")
-            logger.info(f"cleaned_df dtypes:\n{cleaned_df.dtypes}")
-            logger.info(f"fact_df dtypes:\n{fact_df.dtypes}")
-            logger.info(f"dim_meta_df dtypes:\n{dim_meta_df.dtypes}")
-            
-            # Function to convert columns based on BigQuery schema
+            # Convert ALL columns that BigQuery expects as STRING
             def convert_string_columns(df, schema, df_name):
                 """Convert DataFrame columns to string if schema expects STRING."""
                 for field in schema:
                     if field.field_type == 'STRING' and field.name in df.columns:
                         if df[field.name].dtype == 'int64':
-                            logger.info(f"Converting {field.name} to string in {df_name} (dtype: {df[field.name].dtype})")
-                            # Convert to string, replace 'nan' string with empty string
+                            logger.info(f"Converting {field.name} to string in {df_name}")
                             df[field.name] = df[field.name].astype(str).replace('nan', '')
-                            logger.info(f"  After conversion: {df[field.name].dtype}")
                 return df
             
-            # Convert based on actual BigQuery schemas
             cleaned_df = convert_string_columns(cleaned_df, ENLA_CALLAO_CLEANED_SCHEMA, 'cleaned_df')
             fact_df = convert_string_columns(fact_df, FACT_ENLA_SCHEMA, 'fact_df')
             dim_meta_df = convert_string_columns(dim_meta_df, DIM_META_SCHEMA, 'dim_meta_df')
             dim_calendario_df = convert_string_columns(dim_calendario_df, DIM_CALENDARIO_SCHEMA, 'dim_calendario_df')
-            
-            # Debug: Print dtypes after conversion
-            logger.info("=== DataFrame dtypes AFTER conversion ===")
-            logger.info(f"cleaned_df dtypes:\n{cleaned_df.dtypes}")
-            logger.info(f"fact_df dtypes:\n{fact_df.dtypes}")
-            logger.info(f"dim_meta_df dtypes:\n{dim_meta_df.dtypes}")
             
             self.bq_manager.load_table_from_dataframe(
                 self.dataset_id, 'enla_callao_cleaned',
@@ -257,7 +291,7 @@ class ETLTransform:
                 execution_time_seconds=execution_time,
             )
             
-            logger.info(f"ETL Pipeline completed successfully | tables_loaded={len(tables_loaded)} total_rows={total_rows} execution_time={execution_time:.2f}s data_quality_valid={quality_summary.is_valid}")
+            logger.info(f"ETL Pipeline completed | tables={len(tables_loaded)} rows={total_rows} time={execution_time:.2f}s")
             
             return result
             
@@ -265,30 +299,17 @@ class ETLTransform:
             execution_time = (datetime.now(timezone.utc) - start_time).total_seconds()
             error_msg = f"ETL transformation error: {str(e)}"
             logger.error(error_msg)
-            
-            return ETLResult(
-                success=False,
-                data_quality=DataQualitySummary(),
-                tables_loaded=tables_loaded,
-                total_rows_loaded=total_rows,
-                execution_time_seconds=execution_time,
-                error_message=error_msg,
-            )
+            return ETLResult(success=False, data_quality=DataQualitySummary(),
+                           tables_loaded=tables_loaded, total_rows_loaded=total_rows,
+                           execution_time_seconds=execution_time, error_message=error_msg)
         except Exception as e:
             execution_time = (datetime.now(timezone.utc) - start_time).total_seconds()
             error_msg = f"Unexpected ETL error: {str(e)}"
             logger.error(error_msg, exc_info=True)
-            
-            return ETLResult(
-                success=False,
-                data_quality=DataQualitySummary(),
-                tables_loaded=tables_loaded,
-                total_rows_loaded=total_rows,
-                execution_time_seconds=execution_time,
-                error_message=error_msg,
-            )
+            return ETLResult(success=False, data_quality=DataQualitySummary(),
+                           tables_loaded=tables_loaded, total_rows_loaded=total_rows,
+                           execution_time_seconds=execution_time, error_message=error_msg)
         finally:
-            # Clean up connections
             try:
                 self.bq_manager.disconnect()
                 self.mongo_manager.disconnect()
@@ -299,15 +320,15 @@ class ETLTransform:
     # Extract Phase
     # ==========================================
     
-    def _extract_from_mongodb(self) -> pd.DataFrame:
+    def _extract_from_mongodb(self, year: Optional[int] = None) -> pd.DataFrame:
         """
-        Extract all records from MongoDB enla_callao_raw collection.
+        Extract records from MongoDB enla_callao_raw collection.
         
+        Args:
+            year: Optional year filter
+            
         Returns:
             DataFrame with raw ENLA data
-            
-        Raises:
-            ETLTransformError: If MongoDB connection or query fails
         """
         try:
             collection = self.mongo_manager.get_collection(
@@ -315,28 +336,29 @@ class ETLTransform:
                 settings.MONGODB_COLLECTION_RAW
             )
             
-            # Query all documents, converting ObjectId to string
-            cursor = collection.find({})
+            # Build query
+            query = {}
+            if year:
+                query['ano_evaluacion'] = year
+            
+            cursor = collection.find(query)
             
             records = []
             for doc in cursor:
-                # Convert ObjectId to string for JSON compatibility
                 doc['_id'] = str(doc['_id'])
                 records.append(doc)
             
             if not records:
-                msg = "No records found in MongoDB enla_callao_raw collection"
+                msg = f"No records found in MongoDB" + (f" for year={year}" if year else "")
                 logger.warning(msg)
-                raise ETLTransformError(msg)
+                return pd.DataFrame()
             
             df = pd.DataFrame(records)
             
-            logger.info(f"Extracted records from MongoDB | row_count={len(df)} columns={list(df.columns)}")
+            logger.info(f"Extracted from MongoDB | rows={len(df)} columns={list(df.columns)[:10]}")
             
             return df
             
-        except ETLTransformError:
-            raise
         except Exception as e:
             msg = f"Failed to extract data from MongoDB: {str(e)}"
             logger.error(msg)
@@ -346,92 +368,150 @@ class ETLTransform:
     # Transform Phase
     # ==========================================
     
-    def _transform_to_long_format(self, raw_df: pd.DataFrame) -> pd.DataFrame:
+    def _transform_to_long_format(self, raw_df: pd.DataFrame, year: Optional[int] = None) -> pd.DataFrame:
         """
         Transform wide-format data to long format by academic area.
         
-        Converts from (wide - one row per student with all area scores):
-            id_ie | cor_est | area (geographic) | M500_EM_2S_2023_CT | M500_EM_2S_2023_MA | ...
-        To (long - one row per student per academic area):
-            id_ie | cor_est | area (geographic) | area_academica | score | grupo | peso
-            IE001 | EST001 | Urban             | comunicacion    | 72.5  | 2     | 1.0
-            IE001 | EST001 | Urban             | matematica      | 65.3  | 3     | 1.0
+        Uses DYNAMIC column discovery via regex patterns to handle different years
+        with DIFFERENT column naming conventions.
         
         Args:
             raw_df: Raw DataFrame from MongoDB
+            year: Year extracted from FILENAME
             
         Returns:
-            DataFrame in long format with columns:
-            id_ie, id_seccion, nom_ie, nom_dre, year, area (geographic),
-            cor_est, area_academica, score, grupo, peso, is_null_score, created_at
+            DataFrame in long format
         """
-        # DEFENSIVE: Log columns to help debug KeyError issues
-        logger.info(f"Transform input columns: {list(raw_df.columns)}")
+        logger.info(f"Transform input columns ({len(raw_df.columns)}): {list(raw_df.columns)[:20]}...")
+        logger.info(f"Year parameter: {year}")
         
-        # DEFENSIVE: Create case-insensitive column mapping
-        # This handles any case variation (ID_IE, id_ie, Id_Ie, etc.)
+        # Create case-insensitive column mapping
         col_mapping = {col.lower(): col for col in raw_df.columns}
-        logger.info(f"Column mapping (lowercase -> original): {col_mapping}")
         
         def get_column(df, possible_names):
             """Get column from DataFrame, trying multiple case variations."""
             for name in possible_names:
                 if name in df.columns:
                     return df[name]
-                # Also try case-insensitive match
                 lower_name = name.lower()
                 if lower_name in col_mapping:
                     actual_col = col_mapping[lower_name]
-                    logger.info(f"Column '{name}' found as '{actual_col}' (case-insensitive match)")
+                    logger.info(f"Column '{name}' found as '{actual_col}' (case-insensitive)")
                     return df[actual_col]
-            raise KeyError(f"Column not found. Tried: {possible_names}. Available columns: {list(df.columns)}")
+            raise KeyError(f"Column not found. Tried: {possible_names}. Available: {list(df.columns)[:10]}")
         
+        # Determine year
+        if year is None:
+            try:
+                if 'ano_evaluacion' in col_mapping:
+                    year_col = col_mapping['ano_evaluacion']
+                    year_values = raw_df[year_col].dropna()
+                    if len(year_values) > 0:
+                        year = int(float(year_values.iloc[0]))
+                        logger.info(f"Year from 'ano_evaluacion' column: {year}")
+            except Exception as e:
+                logger.warning(f"Could not extract year from data: {e}")
+        
+        if year is None:
+            logger.warning("Year not determined! Using 2023 as default")
+            year = 2023
+        
+        logger.info(f"Processing data for year: {year}")
+        
+        # ==========================================
+        # DYNAMIC COLUMN DISCOVERY
+        # ==========================================
+        area_columns = {}
+        
+        for area_name, patterns in AREA_PATTERNS.items():
+            found_cols = {'measure': None, 'group': None, 'weight': None}
+            
+            # Search for measure column
+            for col in raw_df.columns:
+                for pattern in patterns['measure_patterns']:
+                    if re.search(pattern, col, re.IGNORECASE):
+                        found_cols['measure'] = col
+                        break
+                if found_cols['measure']:
+                    break
+            
+            # Search for group column
+            for col in raw_df.columns:
+                for pattern in patterns['group_patterns']:
+                    if re.search(pattern, col, re.IGNORECASE):
+                        found_cols['group'] = col
+                        break
+                if found_cols['group']:
+                    break
+            
+            # Search for weight column
+            for col in raw_df.columns:
+                for pattern in patterns['weight_patterns']:
+                    if re.search(pattern, col, re.IGNORECASE):
+                        found_cols['weight'] = col
+                        break
+                if found_cols['weight']:
+                    break
+            
+            # Check if this area has data
+            if found_cols['measure'] and found_cols['group']:
+                area_columns[area_name] = found_cols
+                logger.info(f"✓ Found '{area_name}': measure={found_cols['measure']}, group={found_cols['group']}, weight={found_cols['weight']}")
+            else:
+                if patterns['required']:
+                    logger.warning(f"✗ REQUIRED area '{area_name}' NOT FOUND! measure={found_cols['measure']}, group={found_cols['group']}")
+                else:
+                    logger.info(f"- Optional area '{area_name}' not present (OK)")
+        
+        if not area_columns:
+            msg = f"No academic area columns found! Available: {list(raw_df.columns)[:20]}"
+            logger.error(msg)
+            raise ETLTransformError(msg)
+        
+        # ==========================================
+        # TRANSFORM TO LONG FORMAT
+        # ==========================================
         all_records = []
         
-        for score_col, area_name in AREA_COLUMN_MAP.items():
-            if score_col not in raw_df.columns:
-                logger.warning(f"Column '{score_col}' not found in raw data, skipping area '{area_name}'")
-                continue
-            
-            # Derive related column names
-            grupo_col = score_col.replace('M500_', 'grupo_')
-            peso_col = f"peso_{area_name[-2:].upper()}"  # peso_CT, peso_MA, peso_CS
-            
-            # Extract score column and convert to numeric
-            scores = pd.to_numeric(raw_df[score_col], errors='coerce')
-            
-            # Create records for this academic area
-            # DEFENSIVE: Use helper function to handle case variations
-            area_df = pd.DataFrame({
-                'id_ie': get_column(raw_df, ['ID_IE', 'id_ie']),  # Try uppercase first
-                'id_seccion': get_column(raw_df, ['ID_SECCION', 'id_seccion']),  # Try uppercase first
-                'nom_ie': get_column(raw_df, ['nom_ie', 'NOM_IE']) if 'nom_ie' in col_mapping or 'NOM_IE' in raw_df.columns else None,
-                'nom_dre': get_column(raw_df, ['nom_dre', 'NOM_DRE']) if 'nom_dre' in col_mapping or 'NOM_DRE' in raw_df.columns else None,
-                'year': get_column(raw_df, ['ano_evaluacion', 'ANO_EVALUACION']) if 'ano_evaluacion' in col_mapping or 'ANO_EVALUACION' in raw_df.columns else 2023,
-                'area': get_column(raw_df, ['area', 'AREA']),  # Geographic zone (Rural/Urban)
-                'cor_est': get_column(raw_df, ['cor_est', 'COR_EST']),  # Student identifier
-                'area_academica': area_name,  # Academic area name
-                'score': scores,
-                'grupo': raw_df[grupo_col] if grupo_col in raw_df.columns else None,
-                'peso': raw_df[peso_col] if peso_col in raw_df.columns else None,
-                'is_null_score': scores.isna(),
-                'created_at': datetime.now(timezone.utc),
-            })
-            
-            all_records.append(area_df)
-            logger.debug(f"Processed academic area '{area_name}': {len(area_df)} records")
+        for area_name, cols in area_columns.items():
+            try:
+                scores = pd.to_numeric(raw_df[cols['measure']], errors='coerce')
+                
+                area_df = pd.DataFrame({
+                    'id_ie': get_column(raw_df, ['ID_IE', 'id_ie']),
+                    'id_seccion': get_column(raw_df, ['ID_SECCION', 'id_seccion']),
+                    'nom_ie': get_column(raw_df, ['nom_ie', 'NOM_IE']) if 'nom_ie' in col_mapping or 'NOM_IE' in raw_df.columns else None,
+                    'nom_dre': get_column(raw_df, ['nom_dre', 'NOM_DRE']) if 'nom_dre' in col_mapping or 'NOM_DRE' in raw_df.columns else None,
+                    'year': year,
+                    'area': get_column(raw_df, ['area', 'AREA']),
+                    'cor_est': get_column(raw_df, ['cor_est', 'COR_EST']),
+                    'area_academica': area_name,
+                    'score': scores,
+                    'grupo': raw_df[cols['group']] if cols['group'] in raw_df.columns else None,
+                    'peso': raw_df[cols['weight']] if cols['weight'] and cols['weight'] in raw_df.columns else None,
+                    'is_null_score': scores.isna(),
+                    'created_at': datetime.now(timezone.utc),
+                })
+                
+                all_records.append(area_df)
+                logger.info(f"Processed '{area_name}': {len(area_df)} records (null: {scores.isna().sum()})")
+                
+            except KeyError as e:
+                if AREA_PATTERNS[area_name]['required']:
+                    logger.error(f"Failed to process REQUIRED area '{area_name}': {e}")
+                    raise
+                else:
+                    logger.warning(f"Failed to process optional area '{area_name}': {e} (skipping)")
         
         if not all_records:
-            msg = "No EMA 2023 area columns found in raw data"
+            msg = "No records created during transformation"
             logger.error(msg)
             raise ETLTransformError(msg)
         
         cleaned_df = pd.concat(all_records, ignore_index=True)
-        
-        # Sort for consistency
         cleaned_df = cleaned_df.sort_values(['id_ie', 'cor_est', 'year', 'area_academica']).reset_index(drop=True)
         
-        logger.info(f"Wide-to-long transformation complete | input_rows={len(raw_df)} output_rows={len(cleaned_df)} areas_processed={len(all_records)}")
+        logger.info(f"Transformation complete | input={len(raw_df)} output={len(cleaned_df)} areas={len(all_records)} year={year}")
         
         return cleaned_df
     
@@ -440,23 +520,15 @@ class ETLTransform:
     # ==========================================
     
     def _create_fact_records(self, cleaned_df: pd.DataFrame) -> pd.DataFrame:
-        """
-        Create fact_enla table records with UUID primary keys.
-        
-        Args:
-            cleaned_df: Cleaned long-format DataFrame
-            
-        Returns:
-            DataFrame with fact_enla schema
-        """
+        """Create fact_enla table records with UUID primary keys."""
         fact_df = pd.DataFrame({
             'fact_id': [str(uuid.uuid4()) for _ in range(len(cleaned_df))],
             'id_ie': cleaned_df['id_ie'],
             'id_seccion': cleaned_df['id_seccion'],
             'nom_ie': cleaned_df['nom_ie'],
             'year': cleaned_df['year'].astype(int),
-            'area_academica': cleaned_df['area_academica'],  # Academic area (comunicacion/matematica/ccss)
-            'cor_est': cleaned_df['cor_est'],  # Student identifier
+            'area_academica': cleaned_df['area_academica'],
+            'cor_est': cleaned_df['cor_est'],
             'score': cleaned_df['score'],
             'created_at': cleaned_df['created_at'],
         })
@@ -469,16 +541,7 @@ class ETLTransform:
     # ==========================================
     
     def _create_dim_meta(self, cleaned_df: pd.DataFrame) -> pd.DataFrame:
-        """
-        Create dim_meta table with institution targets per academic area per year.
-        
-        Args:
-            cleaned_df: Cleaned long-format DataFrame
-            
-        Returns:
-            DataFrame with dim_meta schema
-        """
-        # Get unique institution-academic_area-year combinations
+        """Create dim_meta table with institution targets per academic area per year."""
         unique_combos = cleaned_df[['id_ie', 'nom_ie', 'year', 'area_academica']].drop_duplicates()
         
         dim_meta_df = pd.DataFrame({
@@ -486,41 +549,29 @@ class ETLTransform:
             'id_ie': unique_combos['id_ie'],
             'nom_ie': unique_combos['nom_ie'],
             'year': unique_combos['year'].astype(int),
-            'area': unique_combos['area_academica'],  # Academic area
+            'area': unique_combos['area_academica'],
             'target_score': settings.TARGET_SCORE_THRESHOLD,
             'region': settings.ENLA_REGION,
             'created_at': datetime.now(timezone.utc),
         })
         
-        logger.info(f"dim_meta created | count={len(dim_meta_df)} target_score={settings.TARGET_SCORE_THRESHOLD}")
-        
+        logger.info(f"dim_meta created | count={len(dim_meta_df)}")
         return dim_meta_df
     
-    def _create_dim_calendario(self, raw_df: pd.DataFrame) -> pd.DataFrame:
-        """
-        Create dim_calendario table with date dimension for analysis.
-        
-        Generates calendar entries for all evaluation years found in the data.
-        
-        Args:
-            raw_df: Raw DataFrame from MongoDB
-            
-        Returns:
-            DataFrame with dim_calendario schema
-        """
-        # Get unique years from data
-        years = sorted(raw_df['ano_evaluacion'].dropna().unique())
+    def _create_dim_calendario(self, cleaned_df: pd.DataFrame) -> pd.DataFrame:
+        """Create dim_calendario table with date dimension for analysis."""
+        # Get unique years from cleaned data (has 'year' column from filename)
+        years = sorted(cleaned_df['year'].dropna().unique())
         
         all_dates = []
         for year in years:
             year_int = int(year)
-            # Create entries for key dates in each year (quarter starts + evaluation dates)
             key_dates = [
-                (year_int, 1, 1),   # Q1 start
-                (year_int, 4, 1),   # Q2 start
-                (year_int, 7, 1),   # Q3 start
-                (year_int, 10, 1),  # Q4 start
-                (year_int, 12, 31), # Year end
+                (year_int, 1, 1),
+                (year_int, 4, 1),
+                (year_int, 7, 1),
+                (year_int, 10, 1),
+                (year_int, 12, 31),
             ]
             
             for y, m, d in key_dates:
@@ -539,9 +590,7 @@ class ETLTransform:
                     continue
         
         dim_cal_df = pd.DataFrame(all_dates)
-        
-        logger.info(f"dim_calendario created | count={len(dim_cal_df)} years_covered={list(years)}")
-        
+        logger.info(f"dim_calendario created | count={len(dim_cal_df)} years={list(years)}")
         return dim_cal_df
     
     # ==========================================
@@ -550,22 +599,7 @@ class ETLTransform:
     
     def _validate_data_quality(self, raw_df: pd.DataFrame,
                                 cleaned_df: pd.DataFrame) -> DataQualitySummary:
-        """
-        Run data quality checks on transformed data.
-        
-        Validates:
-        - NULL coverage for critical columns (< 5% threshold)
-        - Score range validity (scores in [0, 100] when not NULL)
-        - Row count consistency (output = input × academic areas)
-        - Geographic zone (area) distribution
-        
-        Args:
-            raw_df: Original raw DataFrame
-            cleaned_df: Transformed long-format DataFrame
-            
-        Returns:
-            DataQualitySummary with validation results
-        """
+        """Run data quality checks on transformed data."""
         summary = DataQualitySummary(
             total_input_rows=len(raw_df),
             total_output_rows=len(cleaned_df),
@@ -573,88 +607,44 @@ class ETLTransform:
         )
         
         # Check 1: NULL score coverage
-        null_scores = cleaned_df['is_null_score'].sum()
+        null_scores = cleaned_df['is_null_score'].sum() if 'is_null_score' in cleaned_df.columns else 0
         summary.null_scores_count = int(null_scores)
-        summary.null_scores_percent = round(
-            (null_scores / len(cleaned_df)) * 100, 2
-        ) if len(cleaned_df) > 0 else 0.0
+        summary.null_scores_percent = round((null_scores / len(cleaned_df)) * 100, 2) if len(cleaned_df) > 0 else 0.0
         
-        logger.info(f"Data quality: NULL score coverage | null_count={summary.null_scores_count} null_percent={summary.null_scores_percent}")
+        logger.info(f"Data quality: NULL score coverage | null={summary.null_scores_count} pct={summary.null_scores_percent}%")
         
-        # Check 2: Score range validity (for non-NULL scores)
-        valid_scores = cleaned_df[~cleaned_df['is_null_score']]['score']
-        if len(valid_scores) > 0:
-            min_score = valid_scores.min()
-            max_score = valid_scores.max()
-            out_of_range = ((valid_scores < 0) | (valid_scores > 100)).sum()
-            
-            # DEBUG: Log actual score ranges to understand the data
-            logger.info(f"Data quality: Score range check | min={min_score} max={max_score} valid_range=[0,100] out_of_range={out_of_range}")
-            
-            # DEBUG: Show distribution of scores in ranges
-            range_counts = {
-                'negative': (valid_scores < 0).sum(),
-                '0_to_50': ((valid_scores >= 0) & (valid_scores <= 50)).sum(),
-                '51_to_100': ((valid_scores > 50) & (valid_scores <= 100)).sum(),
-                '101_to_200': ((valid_scores > 100) & (valid_scores <= 200)).sum(),
-                '201_to_500': ((valid_scores > 200) & (valid_scores <= 500)).sum(),
-                'above_500': (valid_scores > 500).sum(),
-            }
-            logger.info(f"Data quality: Score distribution | {range_counts}")
-            
-            if out_of_range > 0:
-                summary.score_range_valid = False
-                msg = f"{out_of_range} scores out of valid range [0, 100] (actual range: [{min_score}, {max_score}])"
-                summary.warnings.append(msg)  # CHANGED: warnings instead of errors (don't fail ETL)
-                logger.warning(f"Data quality: {msg}")
-                logger.warning(f"  Scores outside [0,100] will be kept but may affect analysis")
-            
-            # DEBUG: Also check raw data score columns
-            logger.info("Data quality: Checking raw score columns...")
-            for col in AREA_COLUMN_MAP.keys():
-                if col in raw_df.columns:
-                    col_data = pd.to_numeric(raw_df[col], errors='coerce')
-                    col_min = col_data.min()
-                    col_max = col_data.max()
-                    col_null = col_data.isna().sum()
-                    logger.info(f"  {col}: min={col_min}, max={col_max}, nulls={col_null}, total={len(raw_df)}")
+        # Check 2: Score range validity
+        if 'is_null_score' in cleaned_df.columns:
+            valid_scores = cleaned_df[~cleaned_df['is_null_score']]['score']
+            if len(valid_scores) > 0:
+                min_score = valid_scores.min()
+                max_score = valid_scores.max()
+                out_of_range = ((valid_scores < 0) | (valid_scores > 100)).sum()
+                
+                logger.info(f"Score range | min={min_score} max={max_score} out_of_range={out_of_range}")
+                
+                if out_of_range > 0:
+                    summary.score_range_valid = False
+                    summary.warnings.append(f"{out_of_range} scores out of range [0,100]")
         
         # Check 3: Critical column NULL coverage
-        # Note: 'area' now = geographic zone (Rural/Urban), 'area_academica' = academic area
         critical_cols = ['id_ie', 'id_seccion', 'year', 'area_academica', 'cor_est']
         for col in critical_cols:
             if col in cleaned_df.columns:
-                null_pct = round(
-                    (cleaned_df[col].isna().sum() / len(cleaned_df)) * 100, 2
-                )
+                null_pct = round((cleaned_df[col].isna().sum() / len(cleaned_df)) * 100, 2)
                 summary.critical_null_coverage[col] = null_pct
                 
                 if null_pct > 5.0:
-                    msg = f"Critical column '{col}' has {null_pct}% NULL coverage (threshold: 5%)"
-                    summary.warnings.append(msg)
-                    logger.warning(msg)
-                
+                    summary.warnings.append(f"Column '{col}' has {null_pct}% NULL")
                 if null_pct > 20.0:
-                    msg = f"FAIL: Critical column '{col}' has {null_pct}% NULL coverage (exceeds 20%)"
-                    summary.errors.append(msg)
-                    logger.error(msg)
+                    summary.errors.append(f"FAIL: Column '{col}' has {null_pct}% NULL")
         
-        # Check 3b: Geographic zone (area) distribution - informational
+        # Check 4: Geographic zone distribution
         if 'area' in cleaned_df.columns:
             area_dist = cleaned_df['area'].value_counts().to_dict()
-            logger.info(f"Data quality: Geographic zone distribution | {area_dist}")
+            logger.info(f"Geographic zone distribution | {area_dist}")
         
-        # Check 4: Row count consistency
-        expected_rows = len(raw_df) * len(AREA_COLUMN_MAP)
-        if len(cleaned_df) != expected_rows:
-            msg = (f"Row count mismatch: expected {expected_rows} "
-                   f"(input: {len(raw_df)} × {len(AREA_COLUMN_MAP)} academic areas), "
-                   f"got {len(cleaned_df)}")
-            summary.warnings.append(msg)
-            logger.warning(msg)
-        
-        # Log summary
-        logger.info(f"Data quality validation complete | is_valid={summary.is_valid} warnings={len(summary.warnings)} errors={len(summary.errors)}")
+        logger.info(f"Data quality complete | valid={summary.is_valid} warnings={len(summary.warnings)} errors={len(summary.errors)}")
         
         return summary
 
@@ -664,8 +654,9 @@ class ETLTransform:
 # ==========================================
 
 def run_etl_pipeline(mongodb_uri: Optional[str] = None,
-                     gcp_project_id: Optional[str] = None,
-                     gcp_credentials_path: Optional[str] = None) -> ETLResult:
+                      gcp_project_id: Optional[str] = None,
+                      gcp_credentials_path: Optional[str] = None,
+                      year: Optional[int] = None) -> ETLResult:
     """
     Run the complete ETL pipeline from MongoDB to BigQuery.
     
@@ -673,6 +664,7 @@ def run_etl_pipeline(mongodb_uri: Optional[str] = None,
         mongodb_uri: MongoDB connection string (uses env if None)
         gcp_project_id: GCP project ID (uses env if None)
         gcp_credentials_path: Path to GCP credentials JSON (uses env if None)
+        year: Year extracted from FILENAME (e.g., 2021, 2022, 2023).
     
     Returns:
         ETLResult with execution status and metadata
@@ -682,4 +674,4 @@ def run_etl_pipeline(mongodb_uri: Optional[str] = None,
         gcp_project_id=gcp_project_id,
         gcp_credentials_path=gcp_credentials_path,
     )
-    return transform.run_full_pipeline()
+    return transform.run_full_pipeline(year=year)

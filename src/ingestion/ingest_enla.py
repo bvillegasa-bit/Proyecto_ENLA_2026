@@ -5,6 +5,7 @@ from pathlib import Path
 from typing import Dict, List, Optional, Any
 from datetime import datetime
 import uuid
+import re
 from pymongo.errors import PyMongoError, DuplicateKeyError
 
 from src.logging.setup import get_logger
@@ -20,32 +21,49 @@ class IngestionError(Exception):
     pass
 
 
+def extract_year_from_filename(filename: str) -> Optional[int]:
+    """
+    Extract year from filename like: data_2022.xlsx, ENLA_2023.xlsx, enla_2021.xlsx
+    
+    Args:
+        filename: Name of the Excel file
+        
+    Returns:
+        Year as integer (e.g., 2022) or None if not found
+    """
+    # Match patterns like: 2022, 2023, 2021 in the filename
+    match = re.search(r'20(\d{2})', filename)
+    if match:
+        year = 2000 + int(match.group(1))
+        logger.info(f"Extracted year {year} from filename: {filename}")
+        return year
+    logger.warning(f"Could not extract year from filename: {filename}")
+    return None
+
+
 class ENLAIngestor:
     """
     Complete ENLA data ingestion pipeline.
     
     Responsibilities:
     1. Read Excel file with encoding handling
-    2. Filter by region and grade
-    3. Validate data quality
-    4. Deduplicate using compound key
-    5. UPSERT into MongoDB
-    6. Log audit trail
+    2. Extract year from FILENAME (not from data)
+    3. Filter by region and grade
+    4. Validate data quality (with flexible column validation)
+    5. Deduplicate using compound key
+    6. UPSERT into MongoDB (with year added to each record)
+    7. Log audit trail
     """
     
-    # Corrected schema: EMA 2023 columns + single cor_est (student ID)
-    # NOTE: Column names must match Excel EXACTLY (case-sensitive)
-    # User's Excel: ID_IE (uppercase), cod_DRE (mixed), cor_est (lowercase)
-    REQUIRED_COLUMNS = {
-        'ID_IE', 'ID_SECCION', 'nom_ie', 'nom_dre',  # FIXED: ID_IE/ID_SECCION uppercase
-        'ano_evaluacion', 'grado_evaluacion',
+    # Core columns that should be present in ALL years (case-sensitive from Excel)
+    CORE_COLUMNS = {
+        'ID_IE', 'ID_SECCION', 'nom_ie', 'nom_dre',
+        'grado_evaluacion',
         'cor_est', 'area',  # cor_est = student ID, area = geographic zone
-        'M500_EM_2S_2023_CT', 'M500_EM_2S_2023_MA', 'M500_EM_2S_2023_CS',
-        'grupo_EM_2S_2023_CT', 'grupo_EM_2S_2023_MA', 'grupo_EM_2S_2023_CS',
-        'peso_CT', 'peso_MA', 'peso_CS'
     }
     
-    UPSERT_KEY = ['ID_IE', 'ID_SECCION', 'ano_evaluacion']  # FIXED: uppercase to match Excel
+    # UPSERT_KEY uses ano_evaluacion (will be added from filename if not present)
+    UPSERT_KEY = ['ID_IE', 'ID_SECCION', 'ano_evaluacion']
     
     def __init__(
         self,
@@ -96,20 +114,17 @@ class ENLAIngestor:
             self.client.close()
             logger.info("MongoDB connection closed")
     
-    def read_excel(self, file_path: str, encoding: str = 'latin-1') -> pd.DataFrame:
+    def read_excel(self, file_path: str, year: Optional[int] = None, encoding: str = 'latin-1') -> pd.DataFrame:
         """
         Read Excel file with encoding handling.
         
         Args:
             file_path: Path to Excel file
+            year: Year to add as 'ano_evaluacion' column (extracted from filename)
             encoding: Primary encoding (default: latin-1, fallback: utf-8)
         
         Returns:
-            DataFrame
-        
-        Raises:
-            FileNotFoundError: If file does not exist
-            IngestionError: If file cannot be read
+            DataFrame with 'ano_evaluacion' column added if year is provided
         """
         path = Path(file_path)
         
@@ -133,22 +148,31 @@ class ENLAIngestor:
                 raise IngestionError(msg)
         
         # NOTE: Preserve original column names (mixed case from Excel)
-        # User's Excel has: ID_IE (uppercase), cod_DRE (mixed case), cor_est (lowercase)
-        # Do NOT normalize to lowercase - use exact column names from Excel
         df.columns = df.columns.str.strip()  # Only strip whitespace, preserve case
+        
+        # Add year column from filename if not present in data
+        if year and 'ano_evaluacion' not in df.columns:
+            df['ano_evaluacion'] = year
+            logger.info(f"Added 'ano_evaluacion' column with year {year} from filename")
+        elif 'ano_evaluacion' in df.columns:
+            logger.info(f"Using 'ano_evaluacion' from Excel data (years: {df['ano_evaluacion'].unique()})")
+        else:
+            logger.warning("No 'ano_evaluacion' column and no year provided - data will use default")
         
         return df
     
     def filter_data(self, df: pd.DataFrame,
                    region: str = None,
-                   grado: int = None) -> pd.DataFrame:
+                   grado: int = None,
+                   year: int = None) -> pd.DataFrame:
         """
-        Filter data by region, grade, and years.
+        Filter data by region, grade, and year.
         
         Args:
             df: DataFrame to filter
             region: Region name (default from settings)
             grado: Grade level (default from settings)
+            year: Specific year to filter (if None, uses settings.ENLA_YEARS)
         
         Returns:
             Filtered DataFrame
@@ -168,7 +192,11 @@ class ENLAIngestor:
         if 'grado_evaluacion' in df.columns:
             df = df[df['grado_evaluacion'] == grado]
         
-        if 'ano_evaluacion' in df.columns:
+        # Filter by year - if specific year provided, filter to that year only
+        if year and 'ano_evaluacion' in df.columns:
+            df = df[df['ano_evaluacion'] == year]
+            logger.info(f"Filtered to specific year: {year}")
+        elif 'ano_evaluacion' in df.columns:
             df = df[df['ano_evaluacion'].isin(settings.ENLA_YEARS)]
         
         filtered_size = len(df)
@@ -286,28 +314,28 @@ class ENLAIngestor:
             self.log_collection.insert_one(log_entry)
             logger.info(f"Ingestion logged to MongoDB audit trail | ingestion_id={self.ingestion_id}")
         except PyMongoError as e:
-            logger.error("Failed to log ingestion to MongoDB",
-                        error=str(e))
+            logger.error("Failed to log ingestion to MongoDB", error=str(e))
     
     def ingest(self, file_path: str,
-              region: str = None,
-              grado: int = None) -> Dict[str, Any]:
+               region: str = None,
+               grado: int = None) -> Dict[str, Any]:
         """
         Execute full ingestion pipeline.
         
         Args:
-            file_path: Path to Excel file
+            file_path: Path to Excel file (year will be extracted from filename)
             region: Region filter (default from settings)
             grado: Grade filter (default from settings)
         
         Returns:
-            Summary dict with ingestion results
+            Summary dict with ingestion results including 'year_extracted'
         """
         summary = {
             'status': 'failed',
             'timestamp': datetime.utcnow().isoformat(),
             'ingestion_id': self.ingestion_id,
             'file_path': file_path,
+            'year_extracted': None,
             'rows_read': 0,
             'rows_filtered': 0,
             'rows_inserted': 0,
@@ -318,13 +346,21 @@ class ENLAIngestor:
         }
         
         try:
-            # Step 1: Read Excel
-            logger.info(f"Starting ingestion pipeline | file_path={file_path}")
-            df = self.read_excel(file_path)
+            # Step 0: Extract year from FILENAME (NOT from data!)
+            filename = Path(file_path).name
+            year = extract_year_from_filename(filename)
+            summary['year_extracted'] = year
+            
+            if year is None:
+                logger.warning(f"Could not extract year from filename '{filename}', will try from data if available")
+            
+            # Step 1: Read Excel (pass year to add as column)
+            logger.info(f"Starting ingestion pipeline | file_path={file_path} year={year}")
+            df = self.read_excel(file_path, year=year)
             summary['rows_read'] = len(df)
             
-            # Step 2: Filter data
-            df = self.filter_data(df, region=region, grado=grado)
+            # Step 2: Filter data (pass year for filtering)
+            df = self.filter_data(df, region=region, grado=grado, year=year)
             summary['rows_filtered'] = len(df)
             
             if len(df) == 0:
@@ -334,7 +370,7 @@ class ENLAIngestor:
                 summary['status'] = 'success'  # Not an error, just empty result
                 return summary
             
-            # Step 3: Validate
+            # Step 3: Validate (with flexible column checking)
             validation_report = self.validate(df)
             summary['validation_report'] = {
                 'is_valid': validation_report.is_valid,
@@ -363,7 +399,7 @@ class ENLAIngestor:
                 summary['errors'].append(error)
             
             summary['status'] = 'success'
-            logger.info(f"Ingestion completed successfully | ingestion_id={self.ingestion_id} status='success'")
+            logger.info(f"Ingestion completed successfully | ingestion_id={self.ingestion_id} status='success' year={year}")
             
         except Exception as e:
             summary['status'] = 'failed'
@@ -379,9 +415,9 @@ class ENLAIngestor:
 
 
 def ingest_enla_xlsx(file_path: str,
-                    region: str = None,
-                    grado: int = None,
-                    mongodb_uri: str = None) -> Dict[str, Any]:
+                     region: str = None,
+                     grado: int = None,
+                     mongodb_uri: str = None) -> Dict[str, Any]:
     """
     Convenience function for ENLA ingestion.
     
