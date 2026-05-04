@@ -24,8 +24,8 @@ jobs:
     # Environment variables at JOB level
     env:
       GCP_SA_KEY: ${{ secrets.GCP_SA_KEY }}
-          BQ_PROJECT: ${{ secrets.GCP_PROJECT_ID || 'enla-2026-callao' }}
-          DBT_DATASET_ID: "BI_ENLA"
+      BQ_PROJECT: ${{ secrets.GCP_PROJECT_ID || 'enla-2026-callao' }}
+      DBT_DATASET_ID: "BI_ENLA"
     steps:
       - name: Check GCP credentials
         if: ${{ env.GCP_SA_KEY != '' }}
