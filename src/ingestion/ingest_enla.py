@@ -172,6 +172,11 @@ class ENLAIngestor:
             df['nom_ie'] = df.get('ID_IE', '').astype(str) + ' - Unknown'
             logger.info("Added missing 'nom_ie' column with default values")
         
+        # Add grado_evaluacion if missing (all Excel files are 2do de secundaria)
+        if 'grado_evaluacion' not in df.columns and 'Grado' not in df.columns:
+            df['grado_evaluacion'] = 2
+            logger.info("Added missing 'grado_evaluacion' column with default value 2 (all data is 2do)")
+        
         # Add year column from filename if not present in data
         if year and 'ano_evaluacion' not in df.columns:
             df['ano_evaluacion'] = year
@@ -340,7 +345,7 @@ class ENLAIngestor:
         Args:
             summary: Ingestion summary to log
         """
-        if not self.log_collection:
+        if self.log_collection is not None:
             return
         
         log_entry = {

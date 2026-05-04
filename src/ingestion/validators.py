@@ -32,7 +32,7 @@ class ENLAValidator:
     # Core columns that should be present in ALL years
     CORE_COLUMNS = {
         'ID_IE', 'ID_SECCION', 'nom_ie', 'nom_dre',
-        'ano_evaluacion', 'grado_evaluacion',
+        'ano_evaluacion',  # grado_evaluacion optional - added with default 2 if missing
         'cor_est', 'area',  # cor_est = student ID, area = geographic zone
     }
     
