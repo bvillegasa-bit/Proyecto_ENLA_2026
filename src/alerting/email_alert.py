@@ -75,12 +75,12 @@ class AlertManager:
     """
 
     AREA_RECOMMENDATIONS = {
-        'comunicacion': [
+        'comunicación': [
             "Implementar talleres de comprensión lectora intensivos",
             "Reforzar habilidades de escritura y producción de textos",
             "Promover lectura diaria con materiales contextualizados"
         ],
-        'matematica': [
+        'matemática': [
             "Fortalecer resolución de problemas con situaciones reales",
             "Implementar material concreto para conceptos abstractos",
             "Practicar razonamiento lógico-matemático semanalmente"
@@ -98,11 +98,12 @@ class AlertManager:
     }
 
     AREA_DISPLAY_NAMES = {
-        'comunicacion': 'Comunicación',
-        'matematica': 'Matemática',
+        'comunicación': 'Comunicación',
+        'matemática': 'Matemática',
         'ccss': 'Ciencias Sociales',
         'cyt': 'Ciencia y Tecnología'
     }
+    # NOTE: Keys now use accents to match user's data: 'comunicación', 'matemática'
 
     # Risk level thresholds from Sprint 4
     RISK_THRESHOLDS = {
@@ -148,7 +149,7 @@ class AlertManager:
         Query predictions WHERE risk_level = 'ALTO'.
 
         Args:
-            area: Optional area filter (comunicacion, matematica, ccss, cyt).
+            area: Optional area filter (comunicación, matemática, ccss, cyt).
                   If None, return for all areas.
 
         Returns:

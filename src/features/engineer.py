@@ -66,7 +66,7 @@ class FeaturePipelineResult:
 # Feature Engineering Constants
 # ==========================================
 
-AREAS = ['comunicacion', 'matematica', 'ccss']  # Removed 'cyt' - no data available
+AREAS = ['comunicación', 'matemática', 'ccss']  # Removed 'cyt' - no data available | User said: "comunicación y matemática" WITH accents!
 FEATURE_COLS = ['avg_score_2023', 'avg_score_2022', 'avg_score_2021', 'trend', 'variance']
 YEARS = [2021, 2022, 2023]
 
@@ -130,7 +130,7 @@ class FeatureEngineer:
 
         Args:
             df: DataFrame from fact_enla with columns: id_ie, nom_ie, year, area_academica, score
-            area: Subject area to filter for (comunicacion, matematica, ccss, cyt)
+            area: Subject area to filter for (comunicación, matemática, ccss, cyt)
 
         Returns:
             DataFrame with columns: institution_id, nom_ie, avg_2021, avg_2022, avg_2023
@@ -387,7 +387,7 @@ class FeatureEngineer:
         6. Generate target labels
 
         Args:
-            area: Subject area (comunicacion, matematica, ccss, cyt)
+            area: Subject area (comunicación, matemática, ccss, cyt)
             meta_overrides: Optional dict of {institution_id: threshold} to override default threshold
 
         Returns:
@@ -499,19 +499,23 @@ class FeatureEngineer:
     def engineer_all_areas(self, meta_overrides: Optional[Dict[str, float]] = None) -> Dict[str, pd.DataFrame]:
         """
         Run feature engineering for all available areas.
-
+        
+        Uses DYNAMIC area discovery from fact_enla table to handle
+        any accent variations (e.g., 'comunicación' vs 'comunicacion').
+        
         Args:
             meta_overrides: Optional dict of {institution_id: threshold} overrides
-
+            
         Returns:
             Dict mapping area name to DataFrame with features
         """
         results = {}
         errors = []
-
+        
         logger.info("Starting feature engineering for all areas")
-
-        # Check what areas are actually available in fact_enla
+        
+        # DYNAMIC AREA DISCOVERY: Query areas from database
+        # This avoids hardcoding and handles accent variations
         try:
             bq_manager = self._get_bq_manager()
             check_query = f"""
@@ -521,23 +525,21 @@ class FeatureEngineer:
             """
             available_areas_df = bq_manager.query(check_query)
             available_areas = available_areas_df['area_academica'].tolist() if not available_areas_df.empty else []
-            logger.info(f"Available areas in fact_enla: {available_areas}")
-
-            # Filter AREAS to only those that have data
-            areas_to_process = [area for area in AREAS if area in available_areas]
-
+            logger.info(f"Areas found in fact_enla: {available_areas}")
+            
+            # Use areas from database (dynamic discovery)
+            areas_to_process = available_areas
+            
             if not areas_to_process:
-                logger.warning("No areas from AREAS list found in fact_enla. Processing all AREAS anyway.")
+                logger.warning("No areas found in fact_enla! Falling back to AREAS constant.")
                 areas_to_process = AREAS
-            else:
-                skipped = [area for area in AREAS if area not in areas_to_process]
-                if skipped:
-                    logger.info(f"Skipping areas not in fact_enla: {skipped}")
-
+            
         except Exception as e:
-            logger.warning(f"Could not check available areas: {e}. Processing all AREAS.")
+            logger.warning(f"Could not query areas from database: {e}. Using AREAS constant.")
             areas_to_process = AREAS
-
+        
+        logger.info(f"Processing areas: {areas_to_process}")
+        
         for area in areas_to_process:
             try:
                 df = self.engineer_features_for_area(area, meta_overrides)
@@ -548,9 +550,9 @@ class FeatureEngineer:
                 errors.append(error_msg)
                 logger.error(error_msg, exc_info=True)
                 results[area] = pd.DataFrame()
-
+        
         logger.info(f"All areas processed | areas_with_data={sum(1 for df in results.values() if not df.empty)} errors={len(errors)}")
-
+        
         return results
 
     # ==========================================

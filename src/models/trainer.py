@@ -1,7 +1,7 @@
 """Model training module for ENLA 2026 Callao ML prediction pipeline.
 
 Trains BigQuery ML Logistic Regression models for each subject area:
-- comunicacion, matematica, ccss, cyt
+- comunicación, matemática, ccss, cyt
 
 Uses temporal train/test split:
 - Train: Years 2021, 2022 (historical data)
@@ -85,12 +85,12 @@ class ModelTrainer:
     """Trains BigQuery ML Logistic Regression models for ENLA prediction.
 
     Trains 4 independent models, one per area:
-    - comunicacion, matematica, ccss, cyt
+    - comunicación, matemática, ccss, cyt
 
     Uses temporal train/test split (2021-2022 train, 2023 test).
     """
 
-    AREAS = AREAS  # ['comunicacion', 'matematica', 'ccss', 'cyt']
+    AREAS = AREAS  # ['comunicación', 'matemática', 'ccss', 'cyt']
     FEATURE_COLUMNS = FEATURE_COLS  # ['avg_score_2023', 'avg_score_2022', 'avg_score_2021', 'trend', 'variance']
 
     def __init__(self, bigquery_client: Optional[BigQueryClientManager] = None,
@@ -133,7 +133,7 @@ class ModelTrainer:
         Uses temporal split: 2021-2022 as train, 2023 as eval.
 
         Args:
-            area: Subject area (comunicacion, matematica, ccss, cyt)
+            area: Subject area (comunicación, matemática, ccss, cyt)
 
         Returns:
             SQL string for CREATE MODEL statement
@@ -177,7 +177,7 @@ class ModelTrainer:
         Train a single model for one area.
 
         Args:
-            area: Subject area (comunicacion, matematica, ccss, cyt)
+            area: Subject area (comunicación, matemática, ccss, cyt)
 
         Returns:
             TrainingResult with training status and stats

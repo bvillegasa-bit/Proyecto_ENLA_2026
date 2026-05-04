@@ -35,6 +35,31 @@ logger = get_logger('etl_transform')
 
 
 # ==========================================
+# Accent Normalization (Defensive Coding)
+# ==========================================
+
+# Normalize common accent variations to match user's data
+# User said: "comunicación y matemática" (WITH accents!)
+ACCENT_NORMALIZATION = {
+    'comunicacion': 'comunicación',
+    'comunicacion': 'comunicación',  # without accent → with accent
+    'matematica': 'matemática',
+    'matematica': 'matemática',  # without accent → with accent
+}
+
+def normalize_area_name(area_name: str) -> str:
+    """Normalize area name to handle accent variations.
+    
+    Args:
+        area_name: Raw area name from data
+        
+    Returns:
+        Normalized area name with correct accents
+    """
+    return ACCENT_NORMALIZATION.get(area_name.lower(), area_name)
+
+
+# ==========================================
 # Custom Exceptions
 # ==========================================
 
@@ -93,24 +118,25 @@ class ETLResult:
 
 # Academic area patterns for DYNAMIC column discovery
 # Column names CHANGE per year - we use regex to discover actual column names
+# NOTE: Keys use ACCENTED names as per user requirement: "comunicación y matemática" (WITH accents!)
 AREA_PATTERNS = {
-    'comunicacion': {
+    'comunicación': {
         'display_name': 'Comunicación',
         # 2023 format: M500_EM_2S_2023_CT (ends with CT)
         # 2022 format: medida500_L (ends with L, may or may not have underscore)
         'measure_patterns': [r'M500.*_CT$', r'^medida.*_L$', r'^medida.*L$', r'M500.*L$'],
         'group_patterns': [r'grupo.*_CT$', r'^grupo.*_L$', r'^grupo.*L$'],
         'weight_patterns': [r'^peso.*_CT$', r'^peso.*_L$', r'^pes_o.*_L$', r'^pes_o.*L$'],
-        'required': True,  # OBLIGATORY area
+        'required': True,  # OBLIGATORY area (user: "comunicación... son obligatorias")
     },
-    'matematica': {
+    'matemática': {
         'display_name': 'Matemática',
         # 2023 format: M500_EM_2S_2023_MA (ends with MA)
         # 2022 format: medida500_M (ends with M, may or may not have underscore)
         'measure_patterns': [r'M500.*_MA$', r'^medida.*_M$', r'^medida.*M$', r'M500.*M$'],
         'group_patterns': [r'grupo.*_MA$', r'^grupo.*_M$', r'^grupo.*M$'],
         'weight_patterns': [r'^peso.*_MA$', r'^peso.*_M$', r'^pes_o.*_M$', r'^pes_o.*M$'],
-        'required': True,  # OBLIGATORY area
+        'required': True,  # OBLIGATORY area (user: "matemática... son obligatorias")
     },
     'ccss': {
         'display_name': 'Ciencias Sociales',
@@ -134,6 +160,8 @@ AREA_PATTERNS = {
 AREA_DISPLAY_NAMES: Dict[str, str] = {
     area: config['display_name'] for area, config in AREA_PATTERNS.items()
 }
+# NOTE: AREA_PATTERNS keys now use accents: 'comunicación', 'matemática'
+# This matches user's data: "comunicación y matemática son obligatorias" (WITH accents!)
 
 
 # ==========================================
@@ -511,7 +539,7 @@ class ETLTransform:
                     'year': year,
                     'area': get_column(raw_df, ['area', 'AREA']),
                     'cor_est': get_column(raw_df, ['cor_est', 'COR_EST']),
-                    'area_academica': area_name,
+                    'area_academica': normalize_area_name(area_name),  # Normalize accents!
                     'score': scores,
                     'grupo': raw_df[cols['group']] if cols['group'] in raw_df.columns else None,
                     'peso': raw_df[cols['weight']] if cols['weight'] and cols['weight'] in raw_df.columns else None,
@@ -568,18 +596,26 @@ class ETLTransform:
     
     def _create_dim_meta(self, cleaned_df: pd.DataFrame) -> pd.DataFrame:
         """Create dim_meta table with institution targets per academic area per year."""
-        unique_combos = cleaned_df[['id_ie', 'nom_ie', 'year', 'area_academica']].drop_duplicates()
+        # Select columns and drop duplicates (use double brackets for multiple columns in pandas)
+        cols_to_select = ['id_ie', 'nom_ie', 'year', 'area_academica']
+        unique_combos = cleaned_df[cols_to_select].drop_duplicates()
+        
+        # Normalize area names (defensive coding)
+        unique_combos['area_academica'] = unique_combos['area_academica'].apply(normalize_area_name)
         
         dim_meta_df = pd.DataFrame({
             'meta_id': [str(uuid.uuid4()) for _ in range(len(unique_combos))],
-            'id_ie': unique_combos['id_ie'],
-            'nom_ie': unique_combos['nom_ie'],
-            'year': unique_combos['year'].astype(int),
-            'area_academica': unique_combos['area_academica'],  # Academic area, NOT geographic zone
+            'id_ie': unique_combos['id_ie'].values,
+            'nom_ie': unique_combos['nom_ie'].values,
+            'year': unique_combos['year'].astype(int).values,
+            'area_academica': unique_combos['area_academica'].values,  # Academic area, NOT geographic zone
             'target_score': settings.TARGET_SCORE_THRESHOLD,
             'region': settings.ENLA_REGION,
             'created_at': datetime.now(timezone.utc),
         })
+        
+        logger.info(f"dim_meta created | count={len(dim_meta_df)}")
+        return dim_meta_df
         
         logger.info(f"dim_meta created | count={len(dim_meta_df)}")
         return dim_meta_df

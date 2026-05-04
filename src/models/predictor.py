@@ -108,7 +108,7 @@ class ENLAPredictor:
         Build ML.PREDICT() SQL query for an area.
 
         Args:
-            area: Subject area (comunicacion, matematica, ccss, cyt)
+            area: Subject area (comunicación, matemática, ccss, cyt)
 
         Returns:
             SQL string for ML.PREDICT() statement
@@ -136,7 +136,7 @@ class ENLAPredictor:
         Generate predictions for one area.
 
         Args:
-            area: Subject area (comunicacion, matematica, ccss, cyt)
+            area: Subject area (comunicación, matemática, ccss, cyt)
 
         Returns:
             DataFrame with predictions including predicted_success, confidence

@@ -38,18 +38,19 @@ class ENLAValidator:
     
     # Academic area patterns for DYNAMIC column discovery
     # Column names CHANGE per year - use regex patterns to find them
+    # NOTE: Keys use ACCENTED names as per user requirement: "comunicación y matemática" (WITH accents!)
     AREA_PATTERNS = {
-        'comunicacion': {
+        'comunicación': {
             'measure_patterns': [r'M500.*(CT|L)$', r'M500.*(CT|L)[^_]*$', r'medida500.*(CT|L)$'],
             'group_patterns': [r'grupo.*(CT|L)$', r'grupo.*(CT|L)[^_]*$'],
             'weight_patterns': [r'peso.*(CT|L)$', r'pes_o.*(CT|L)$'],
-            'required': True,  # Obligatory area
+            'required': True,  # OBLIGATORY area (user: "comunicación... son obligatorias")
         },
-        'matematica': {
+        'matemática': {
             'measure_patterns': [r'M500.*(MA|M)$', r'M500.*(MA|M)[^_]*$', r'medida500.*(MA|M)$'],
             'group_patterns': [r'grupo.*(MA|M)$', r'grupo.*(MA|M)[^_]*$'],
             'weight_patterns': [r'peso.*(MA|M)$', r'pes_o.*(MA|M)$'],
-            'required': True,  # Obligatory area
+            'required': True,  # OBLIGATORY area (user: "matemática... son obligatorias")
         },
         'ccss': {
             'measure_patterns': [r'M500.*(CS|CN)$', r'M500.*(CS|CN)[^_]*$', r'medida500.*(CS|CN)$'],
