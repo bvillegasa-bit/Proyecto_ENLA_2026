@@ -202,7 +202,8 @@ class TestPredictAllAreas:
         results = predictor.predict_all_areas()
 
         assert len(results) == 3
-        for area in ['comunicacion', 'matematica', 'ccss']:
+        # User said: "comunicación y matemática" (WITH accents!)
+        for area in ['comunicación', 'matemática', 'ccss']:
             assert area in results
             assert len(results[area]) == 1
 
@@ -226,7 +227,8 @@ class TestPredictAllAreas:
         results = predictor.predict_all_areas()
 
         assert len(results) == 3
-        assert not results['comunicacion'].empty
+        # User said: "comunicación y matemática" (WITH accents!)
+        assert not results['comunicación'].empty
         assert results['ccss'].empty
 
 
@@ -240,14 +242,15 @@ class TestSavePredictions:
     def test_save_predictions_success(self, predictor: ENLAPredictor):
         """Verify predictions are saved correctly."""
         predictions = {
-            'comunicacion': pd.DataFrame({
+            # User said: "comunicación y matemática" (WITH accents!)
+            'comunicación': pd.DataFrame({
                 'predicted_target': [1, 0],
                 'predicted_target_probability': [0.85, 0.40],
                 'risk_level': ['BAJO', 'ALTO'],
                 'institution_id': ['IE001', 'IE002'],
                 'nom_ie': ['Colegio A', 'Colegio B'],
             }),
-            'matematica': pd.DataFrame({
+            'matemática': pd.DataFrame({
                 'predicted_target': [1],
                 'predicted_target_probability': [0.70],
                 'risk_level': ['MEDIO'],
@@ -270,8 +273,9 @@ class TestSavePredictions:
     def test_save_predictions_empty(self, predictor: ENLAPredictor):
         """Verify saving empty predictions returns no_data status."""
         predictions = {
-            'comunicacion': pd.DataFrame(),
-            'matematica': pd.DataFrame(),
+            # User said: "comunicación y matemática" (WITH accents!)
+            'comunicación': pd.DataFrame(),
+            'matemática': pd.DataFrame(),
         }
 
         result = predictor.save_predictions(predictions)
@@ -282,7 +286,8 @@ class TestSavePredictions:
     def test_save_predictions_bq_error(self, predictor: ENLAPredictor):
         """Verify BigQuery error raises PredictionError."""
         predictions = {
-            'comunicacion': pd.DataFrame({
+            # User said: "comunicación y matemática" (WITH accents!)
+            'comunicación': pd.DataFrame({
                 'predicted_target': [1],
                 'predicted_target_probability': [0.85],
                 'risk_level': ['BAJO'],
@@ -305,8 +310,9 @@ class TestPredictionsSummary:
 
     def test_predictions_summary(self, predictor: ENLAPredictor):
         """Verify summary is computed correctly."""
+        # User said: "comunicación y matemática" (WITH accents!)
         summary_data = {
-            'area': ['comunicacion', 'matematica'],
+            'area': ['comunicación', 'matemática'],
             'total_predictions': [50, 45],
             'alto_count': [10, 15],
             'medio_count': [20, 15],

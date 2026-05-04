@@ -61,7 +61,8 @@ class TestAlertManagerInitialization(unittest.TestCase):
         """Test that all areas have recommendations."""
         manager = AlertManager()
 
-        expected_areas = ['comunicacion', 'matematica', 'ccss', 'cyt']
+        # User said: "comunicación y matemática" (WITH accents!)
+        expected_areas = ['comunicación', 'matemática', 'ccss', 'cyt']
         for area in expected_areas:
             self.assertIn(area, manager.AREA_RECOMMENDATIONS)
             self.assertIsInstance(manager.AREA_RECOMMENDATIONS[area], list)
@@ -71,7 +72,8 @@ class TestAlertManagerInitialization(unittest.TestCase):
         """Test that all areas have display names."""
         manager = AlertManager()
 
-        expected_areas = ['comunicacion', 'matematica', 'ccss', 'cyt']
+        # User said: "comunicación y matemática" (WITH accents!)
+        expected_areas = ['comunicación', 'matemática', 'ccss', 'cyt']
         for area in expected_areas:
             self.assertIn(area, manager.AREA_DISPLAY_NAMES)
             self.assertIsInstance(manager.AREA_DISPLAY_NAMES[area], str)

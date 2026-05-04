@@ -143,10 +143,11 @@ class TestPivotByArea2023:
             f"Expected 9 rows (3 areas × 3 students), got {len(result)}"
     
     def test_pivot_contains_all_areas(self, mock_etl_transform: ETLTransform,
-                                      sample_raw_df_2023: pd.DataFrame):
+                                       sample_raw_df_2023: pd.DataFrame):
         """Verify that all 3 academic areas are present."""
         result = mock_etl_transform._transform_to_long_format(sample_raw_df_2023, year=2023)
-        expected_areas = {'comunicacion', 'matematica', 'ccss'}
+        # User said: "comunicación y matemática" (WITH accents!)
+        expected_areas = {'comunicación', 'matemática', 'ccss'}
         actual_areas = set(result['area_academica'].unique())
         
         assert actual_areas == expected_areas, \
@@ -163,32 +164,35 @@ class TestPivotByArea2023:
             "Not all students appear in all academic areas"
     
     def test_pivot_maps_correct_scores(self, mock_etl_transform: ETLTransform,
-                                       sample_raw_df_2023: pd.DataFrame):
+                                        sample_raw_df_2023: pd.DataFrame):
         """Verify that scores are mapped to the correct academic area."""
         result = mock_etl_transform._transform_to_long_format(sample_raw_df_2023, year=2023)
         
-        # Check comunicacion score for EST001 (from M500_EM_2S_2023_CT = 72.5)
+        # Check comunicación score for EST001 (from M500_EM_2S_2023_CT = 72.5)
+        # User said: "comunicación y matemática" (WITH accents!)
         est001_com = result[
-            (result['cor_est'] == 'EST001') & (result['area_academica'] == 'comunicacion')
+            (result['cor_est'] == 'EST001') & (result['area_academica'] == 'comunicación')
         ]
         assert len(est001_com) == 1
         assert est001_com.iloc[0]['score'] == 72.5
         
-        # Check matematica score for EST001 (from M500_EM_2S_2023_MA = 58.3)
+        # Check matemática score for EST001 (from M500_EM_2S_2023_MA = 58.3)
+        # User said: "comunicación y matemática" (WITH accents!)
         est001_mat = result[
-            (result['cor_est'] == 'EST001') & (result['area_academica'] == 'matematica')
+            (result['cor_est'] == 'EST001') & (result['area_academica'] == 'matemática')
         ]
         assert len(est001_mat) == 1
         assert est001_mat.iloc[0]['score'] == 58.3
     
     def test_pivot_2023_all_areas_found(self, mock_etl_transform: ETLTransform,
-                                          sample_raw_df_2023: pd.DataFrame):
+                                           sample_raw_df_2023: pd.DataFrame):
         """Verify that all 2023 columns are discovered (CT, MA, CS)."""
         result = mock_etl_transform._transform_to_long_format(sample_raw_df_2023, year=2023)
         # Should have 3 students × 3 areas = 9 rows
         assert len(result) == 9
         # All 3 areas should be present
-        assert set(result['area_academica'].unique()) == {'comunicacion', 'matematica', 'ccss'}
+        # User said: "comunicación y matemática" (WITH accents!)
+        assert set(result['area_academica'].unique()) == {'comunicación', 'matemática', 'ccss'}
     
     def test_pivot_preserves_geographic_area(self, mock_etl_transform: ETLTransform,
                                              sample_raw_df_2023: pd.DataFrame):
@@ -247,18 +251,20 @@ class TestPivotByArea2022:
         """Verify that 2022 columns (medida500_L, grupo_L, etc.) are discovered."""
         result = mock_etl_transform._transform_to_long_format(sample_raw_df_2022, year=2022)
         
-        # Check that comunicacion scores come from medida500_L
+        # Check that comunicación scores come from medida500_L
+        # User said: "comunicación y matemática" (WITH accents!)
         est001_com = result[
-            (result['cor_est'] == 'EST001') & (result['area_academica'] == 'comunicacion')
+            (result['cor_est'] == 'EST001') & (result['area_academica'] == 'comunicación')
         ]
         assert len(est001_com) == 1
         assert est001_com.iloc[0]['score'] == 72.5  # From medida500_L
     
     def test_pivot_2022_contains_all_areas(self, mock_etl_transform: ETLTransform,
-                                             sample_raw_df_2022: pd.DataFrame):
+                                              sample_raw_df_2022: pd.DataFrame):
         """Verify that all 3 academic areas are present for 2022."""
         result = mock_etl_transform._transform_to_long_format(sample_raw_df_2022, year=2022)
-        expected_areas = {'comunicacion', 'matematica', 'ccss'}
+        # User said: "comunicación y matemática" (WITH accents!)
+        expected_areas = {'comunicación', 'matemática', 'ccss'}
         actual_areas = set(result['area_academica'].unique())
         
         assert actual_areas == expected_areas, \
@@ -337,16 +343,18 @@ class TestNullHandling:
         """Verify that NULL scores are flagged with is_null_score=True."""
         result = mock_etl_transform._transform_to_long_format(sample_raw_df_2023, year=2023)
         
-        # Check matematica scores for EST003 (should be NULL in fixture)
+        # Check matemática scores for EST003 (should be NULL in fixture)
+        # User said: "comunicación y matemática" (WITH accents!)
         est003_rows = result[result['cor_est'] == 'EST003']
-        est003_mat = est003_rows[est003_rows['area_academica'] == 'matematica']
+        est003_mat = est003_rows[est003_rows['area_academica'] == 'matemática']
         assert len(est003_mat) == 1
         assert est003_mat.iloc[0]['is_null_score'] == True
         assert pd.isna(est003_mat.iloc[0]['score'])
         
-        # Check matematica scores for EST001 (should be valid in fixture - 58.3)
+        # Check matemática scores for EST001 (should be valid in fixture - 58.3)
+        # User said: "comunicación y matemática" (WITH accents!)
         est001_rows = result[result['cor_est'] == 'EST001']
-        est001_mat = est001_rows[est001_rows['area_academica'] == 'matematica']
+        est001_mat = est001_rows[est001_rows['area_academica'] == 'matemática']
         assert len(est001_mat) == 1
         assert est001_mat.iloc[0]['is_null_score'] == False
         assert not pd.isna(est001_mat.iloc[0]['score'])
@@ -431,7 +439,7 @@ class TestDataQualityCheck:
             'year': [2023],
             'area': ['Urban'],  # Geographic zone
             'cor_est': ['EST001'],  # Student ID
-            'area_academica': ['comunicacion'],
+            'area_academica': ['comunicación'],  # User said: WITH accent!
             'score': [150.0],  # Out of range! (valid range is [0, 100])
             'is_null_score': [False],
             'created_at': [datetime.now(timezone.utc)],
@@ -460,7 +468,7 @@ class TestDataQualityCheck:
             'year': [2023] * 20,
             'area': ['Urban'] * 20,
             'cor_est': [None] * 2 + ['EST001'] * 18,  # 10% NULL
-            'area_academica': ['comunicacion'] * 20,
+            'area_academica': ['comunicación'] * 20,  # User said: WITH accent!
             'score': [60.0] * 20,
             'is_null_score': [False] * 20,
             'created_at': [datetime.now(timezone.utc)] * 20,
@@ -488,7 +496,7 @@ class TestDataQualityCheck:
         cleaned = mock_etl_transform._transform_to_long_format(sample_raw_df_2023, year=2023)
         summary = mock_etl_transform._validate_data_quality(sample_raw_df_2023, cleaned)
         
-        # Should be 3 (comunicacion, matematica, ccss)
+        # Should be 3 (comunicación, matemática, ccss) - User said WITH accents!
         assert summary.areas_processed == 3
 
 
@@ -581,7 +589,8 @@ class TestDimensionTables:
         dim_meta = mock_etl_transform._create_dim_meta(cleaned)
         
         # dim_meta['area_academica'] should have academic areas (NOT 'area' which is geographic)
-        expected_areas = {'comunicacion', 'matematica', 'ccss'}
+        # User said: "comunicación y matemática" (WITH accents!)
+        expected_areas = {'comunicación', 'matemática', 'ccss'}
         actual_areas = set(dim_meta['area_academica'].unique())
         assert actual_areas == expected_areas, \
             f"dim_meta should use area_academica for academic areas, got: {actual_areas}"
@@ -636,9 +645,10 @@ class TestDynamicColumnDiscovery:
         df['ano_evaluacion'] = [2023, 2023, 2023]
         
         result = mock_etl_transform._transform_to_long_format(df, year=2023)
-        # 2 areas (comunicacion, matematica) × 3 students = 6 rows
+        # 2 areas (comunicación, matemática) × 3 students = 6 rows
+        # User said: "comunicación y matemática" (WITH accents!)
         assert len(result) == 6
-        assert set(result['area_academica'].unique()) == {'comunicacion', 'matematica'}
+        assert set(result['area_academica'].unique()) == {'comunicación', 'matemática'}
     
     def test_discover_2022_columns(self, mock_etl_transform: ETLTransform):
         """Verify that 2022 columns (medida500_X) are discovered."""
@@ -659,9 +669,10 @@ class TestDynamicColumnDiscovery:
         df['ano_evaluacion'] = [2022, 2022, 2022]
         
         result = mock_etl_transform._transform_to_long_format(df, year=2022)
-        # 2 areas (comunicacion, matematica) × 3 students = 6 rows
+        # 2 areas (comunicación, matemática) × 3 students = 6 rows
+        # User said: "comunicación y matemática" (WITH accents!)
         assert len(result) == 6
-        assert set(result['area_academica'].unique()) == {'comunicacion', 'matematica'}
+        assert set(result['area_academica'].unique()) == {'comunicación', 'matemática'}
     
     def test_optional_area_not_present(self, mock_etl_transform: ETLTransform):
         """Verify that optional areas (ccss, cyt) are skipped if not present."""
@@ -683,9 +694,10 @@ class TestDynamicColumnDiscovery:
         df['ano_evaluacion'] = [2023, 2023, 2023]
         
         result = mock_etl_transform._transform_to_long_format(df, year=2023)
-        # Only 2 areas (comunicacion, matematica) × 3 students = 6 rows
+        # Only 2 areas (comunicación, matemática) × 3 students = 6 rows
+        # User said: "comunicación y matemática" (WITH accents!)
         assert len(result) == 6
-        assert set(result['area_academica'].unique()) == {'comunicacion', 'matematica'}
+        assert set(result['area_academica'].unique()) == {'comunicación', 'matemática'}
     
     def test_missing_required_area_logs_warning(self, mock_etl_transform: ETLTransform):
         """Verify that missing REQUIRED areas log a warning (but don't fail if some areas found)."""

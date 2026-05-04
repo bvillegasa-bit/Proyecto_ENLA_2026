@@ -73,11 +73,12 @@ class TestBuildTrainingQuery:
     """Tests for SQL training query construction."""
 
     def test_build_training_query_comunicacion(self, trainer: ModelTrainer):
-        """Verify SQL structure for comunicacion area."""
-        query = trainer._build_training_query('comunicacion')
+        """Verify SQL structure for comunicación area."""
+        # User said: "comunicación y matemática" (WITH accents!)
+        query = trainer._build_training_query('comunicación')
 
         assert 'CREATE OR REPLACE MODEL' in query
-        assert 'enla_model_comunicacion_v1' in query
+        assert 'enla_model_comunicación_v1' in query
         assert "model_type='logistic_reg'" in query
         assert "input_label_cols=['target']" in query
         assert "data_split_method='CUSTOM'" in query
@@ -86,14 +87,15 @@ class TestBuildTrainingQuery:
         assert "max_iterations=20" in query
         assert "learn_rate=0.1" in query
         assert "early_stop=True" in query
-        assert "WHERE area = 'comunicacion'" in query
+        assert "WHERE area = 'comunicación'" in query
 
     def test_build_training_query_matematica(self, trainer: ModelTrainer):
-        """Verify SQL structure for matematica area."""
-        query = trainer._build_training_query('matematica')
+        """Verify SQL structure for matemática area."""
+        # User said: "comunicación y matemática" (WITH accents!)
+        query = trainer._build_training_query('matemática')
 
-        assert 'enla_model_matematica_v1' in query
-        assert "WHERE area = 'matematica'" in query
+        assert 'enla_model_matemática_v1' in query
+        assert "WHERE area = 'matemática'" in query
 
     def test_build_training_query_ccss(self, trainer: ModelTrainer):
         """Verify SQL structure for ccss area."""
@@ -111,14 +113,16 @@ class TestBuildTrainingQuery:
 
     def test_build_training_query_includes_features(self, trainer: ModelTrainer):
         """Verify all feature columns are included in the query."""
-        query = trainer._build_training_query('comunicacion')
+        # User said: "comunicación y matemática" (WITH accents!)
+        query = trainer._build_training_query('comunicación')
 
         for feature in trainer.FEATURE_COLUMNS:
             assert feature in query, f"Missing feature column: {feature}"
 
     def test_build_training_query_includes_split_logic(self, trainer: ModelTrainer):
         """Verify temporal split logic is in the query."""
-        query = trainer._build_training_query('comunicacion')
+        # User said: "comunicación y matemática" (WITH accents!)
+        query = trainer._build_training_query('comunicación')
 
         assert 'year_in_train' in query
         assert "'train'" in query
@@ -126,9 +130,10 @@ class TestBuildTrainingQuery:
 
     def test_build_training_query_uses_correct_project(self, trainer: ModelTrainer):
         """Verify fully qualified model name uses correct project/dataset."""
-        query = trainer._build_training_query('comunicacion')
+        # User said: "comunicación y matemática" (WITH accents!)
+        query = trainer._build_training_query('comunicación')
 
-        assert 'test-project.BI_ENLA.enla_model_comunicacion_v1' in query
+        assert 'test-project.BI_ENLA.enla_model_comunicación_v1' in query
         assert 'test-project.BI_ENLA.enla_callao_features' in query
 
 
@@ -141,13 +146,15 @@ class TestModelNameConvention:
 
     def test_model_name_v1(self, trainer: ModelTrainer):
         """Verify v1 model name format."""
-        name = trainer._get_model_name('comunicacion', 'v1')
-        assert name == 'test-project.BI_ENLA.enla_model_comunicacion_v1'
+        # User said: "comunicación y matemática" (WITH accents!)
+        name = trainer._get_model_name('comunicación', 'v1')
+        assert name == 'test-project.BI_ENLA.enla_model_comunicación_v1'
 
     def test_model_name_v2(self, trainer: ModelTrainer):
         """Verify v2 model name format."""
-        name = trainer._get_model_name('matematica', 'v2')
-        assert name == 'test-project.BI_ENLA.enla_model_matematica_v2'
+        # User said: "comunicación y matemática" (WITH accents!)
+        name = trainer._get_model_name('matemática', 'v2')
+        assert name == 'test-project.BI_ENLA.enla_model_matemática_v2'
 
     def test_model_name_default_version(self, trainer: ModelTrainer):
         """Verify default version is v1."""
@@ -164,15 +171,15 @@ class TestTrainModelForArea:
 
     def test_train_model_success(self, trainer: ModelTrainer, mock_query_job):
         """Verify successful training returns correct result."""
-        trainer.bq_manager.get_client.return_value.query.return_value = mock_query_job
+        # User said: "comunicación y matemática" (WITH accents!)
+        result = trainer.train_model_for_area('comunicación')
 
-        result = trainer.train_model_for_area('comunicacion')
-
-        assert result.area == 'comunicacion'
+        # User said: "comunicación y matemática" (WITH accents!)
+        assert result.area == 'comunicación'
         assert result.status == 'success'
         assert result.is_success == True
         assert len(result.errors) == 0
-        assert 'comunicacion' in result.model_name
+        assert 'comunicación' in result.model_name
         assert 'job_id' in result.training_stats
 
     def test_train_model_invalid_area(self, trainer: ModelTrainer):
@@ -187,7 +194,8 @@ class TestTrainModelForArea:
         """Verify BigQuery error is handled gracefully."""
         trainer.bq_manager.get_client.return_value.query.side_effect = BigQueryConnectionError("Connection failed")
 
-        result = trainer.train_model_for_area('comunicacion')
+        # User said: "comunicación y matemática" (WITH accents!)
+        result = trainer.train_model_for_area('comunicación')
 
         assert result.status == 'failed'
         assert result.is_success == False
