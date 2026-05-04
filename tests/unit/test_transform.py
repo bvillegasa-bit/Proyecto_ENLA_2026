@@ -343,7 +343,7 @@ class TestDataQualityCheck:
         assert 0.0 < summary.null_scores_percent < 100.0
     
     def test_quality_check_detects_out_of_range_scores(self, mock_etl_transform: ETLTransform):
-        """Verify that out-of-range scores are detected."""
+        """Verify that out-of-range scores are detected and generate warnings (not errors)."""
         raw_df = pd.DataFrame({
             'id_ie': ['IE001'],
             'ano_evaluacion': [2021],
@@ -356,15 +356,19 @@ class TestDataQualityCheck:
             'area': ['Urban'],  # Geographic zone
             'cor_est': ['EST001'],  # Student ID
             'area_academica': ['comunicacion'],
-            'score': [150.0],  # Out of range!
+            'score': [150.0],  # Out of range! (valid range is [0, 100])
             'is_null_score': [False],
             'created_at': [datetime.now(timezone.utc)],
         })
         
         summary = mock_etl_transform._validate_data_quality(raw_df, cleaned_df)
         
+        # Out-of-range scores should generate warnings, not errors
         assert summary.score_range_valid == False
-        assert len(summary.errors) > 0
+        assert len(summary.warnings) > 0
+        assert any('out of valid range' in w for w in summary.warnings)
+        # errors should be empty (we warn but don't fail the ETL)
+        assert len(summary.errors) == 0
     
     def test_quality_check_warns_on_high_null_coverage(self, mock_etl_transform: ETLTransform):
         """Verify warning is generated when critical column NULL > 5%."""
