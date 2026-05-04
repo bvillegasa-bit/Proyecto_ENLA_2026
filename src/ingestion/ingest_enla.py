@@ -114,14 +114,13 @@ class ENLAIngestor:
             self.client.close()
             logger.info("MongoDB connection closed")
     
-    def read_excel(self, file_path: str, year: Optional[int] = None, encoding: str = 'latin-1') -> pd.DataFrame:
+    def read_excel(self, file_path: str, year: Optional[int] = None) -> pd.DataFrame:
         """
-        Read Excel file with encoding handling.
+        Read Excel file.
         
         Args:
             file_path: Path to Excel file
             year: Year to add as 'ano_evaluacion' column (extracted from filename)
-            encoding: Primary encoding (default: latin-1, fallback: utf-8)
         
         Returns:
             DataFrame with 'ano_evaluacion' column added if year is provided
@@ -134,14 +133,14 @@ class ENLAIngestor:
             raise FileNotFoundError(msg)
         
         try:
-            # Try primary encoding
-            df = pd.read_excel(path, encoding=encoding)
-            logger.info(f"Excel file read successfully | file_path={str(path)} rows={len(df)} encoding={encoding}")
-        except (UnicodeDecodeError, Exception) as e:
-            logger.warning(f"Primary encoding failed, trying utf-8 | file_path={str(path)} error={str(e)}")
+            # Excel files are binary, no encoding needed
+            df = pd.read_excel(path)
+            logger.info(f"Excel file read successfully | file_path={str(path)} rows={len(df)}")
+        except Exception as e:
+            logger.warning(f"Failed to read Excel file, trying with openpyxl engine | file_path={str(path)} error={str(e)}")
             try:
-                df = pd.read_excel(path, encoding='utf-8')
-                logger.info(f"Excel file read with utf-8 | file_path={str(path)} rows={len(df)}")
+                df = pd.read_excel(path, engine='openpyxl')
+                logger.info(f"Excel file read with openpyxl | file_path={str(path)} rows={len(df)}")
             except Exception as e2:
                 msg = f"Cannot read Excel file: {str(e2)}"
                 logger.error(msg)
@@ -149,6 +148,29 @@ class ENLAIngestor:
         
         # NOTE: Preserve original column names (mixed case from Excel)
         df.columns = df.columns.str.strip()  # Only strip whitespace, preserve case
+        
+        # Normalize year column variations (handle Spanish ñ and case differences)
+        if 'Año' in df.columns and 'ano_evaluacion' not in df.columns:
+            df = df.rename(columns={'Año': 'ano_evaluacion'})
+            logger.info("Normalized 'Año' column to 'ano_evaluacion'")
+        
+        # Normalize core columns (handle case variations)
+        column_renames = {
+            'ID_seccion': 'ID_SECCION',
+            'ID_ie': 'ID_IE',
+            'nom_dre': 'nom_dre',  # already handled earlier
+            'grado_evaluacion': 'grado_evaluacion',  # already handled earlier
+        }
+        # Apply renames for columns that exist
+        renames = {k: v for k, v in column_renames.items() if k in df.columns and v not in df.columns}
+        if renames:
+            df = df.rename(columns=renames)
+            logger.info(f"Renamed columns: {renames}")
+        
+        # Add missing required columns with defaults
+        if 'nom_ie' not in df.columns:
+            df['nom_ie'] = df.get('ID_IE', '').astype(str) + ' - Unknown'
+            logger.info("Added missing 'nom_ie' column with default values")
         
         # Add year column from filename if not present in data
         if year and 'ano_evaluacion' not in df.columns:
@@ -182,15 +204,40 @@ class ENLAIngestor:
         
         original_size = len(df)
         
-        # Normalize region column
+        # Normalize region column (handle case variations in column names)
+        region_col = None
         if 'nom_dre' in df.columns:
+            region_col = 'nom_dre'
+        elif 'nom_DRE' in df.columns:
+            region_col = 'nom_DRE'
+            df = df.rename(columns={'nom_DRE': 'nom_dre'})
+        
+        if region_col:
             df['nom_dre'] = df['nom_dre'].str.upper().str.strip()
+            df = df[df['nom_dre'] == region.upper()]
+        else:
+            logger.warning(f"No region column found, skipping region filter")
         
-        # Apply filters
-        df = df[df['nom_dre'] == region.upper()]
-        
+        # Handle grade column variations
         if 'grado_evaluacion' in df.columns:
+            # Normalize grade values (handle string representations like '2do')
+            grade_map = {
+                '2do': 2, '3ro': 3, '4to': 4, '5to': 5,
+                '2': 2, '3': 3, '4': 4, '5': 5
+            }
+            df['grado_evaluacion'] = df['grado_evaluacion'].map(lambda x: grade_map.get(str(x), x))
             df = df[df['grado_evaluacion'] == grado]
+        elif 'Grado' in df.columns:
+            df = df.rename(columns={'Grado': 'grado_evaluacion'})
+            # Normalize grade values
+            grade_map = {
+                '2do': 2, '3ro': 3, '4to': 4, '5to': 5,
+                '2': 2, '3': 3, '4': 4, '5': 5
+            }
+            df['grado_evaluacion'] = df['grado_evaluacion'].map(lambda x: grade_map.get(str(x), x))
+            df = df[df['grado_evaluacion'] == grado]
+        else:
+            logger.warning(f"No grade column found, skipping grade filter")
         
         # Filter by year - if specific year provided, filter to that year only
         if year and 'ano_evaluacion' in df.columns:

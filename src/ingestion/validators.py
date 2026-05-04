@@ -159,15 +159,23 @@ class ENLAValidator:
         return []
     
     def _validate_data_types(self, df: pd.DataFrame) -> List[str]:
-        """Verify that score columns are numeric."""
+        """Verify that score columns are numeric, coercing non-numeric to NaN."""
         errors = []
+        warnings = []
         for col in self._discovered_score_columns:
             if col in df.columns:
-                # Try to convert to numeric
-                try:
-                    pd.to_numeric(df[col], errors='raise')
-                except (ValueError, TypeError):
-                    msg = f"Column '{col}' contains non-numeric values"
+                # Convert to numeric, coercing errors to NaN
+                original = df[col].copy()
+                numeric_col = pd.to_numeric(df[col], errors='coerce')
+                na_count = numeric_col.isna().sum()
+                if na_count > 0 and na_count < len(df):
+                    # Some non-numeric values, coerced to NaN
+                    df[col] = numeric_col
+                    msg = f"Column '{col}' contains {na_count} non-numeric values (converted to NaN)"
+                    logger.warning(f"{msg} | column={col} na_count={na_count}")
+                elif na_count == len(df):
+                    # All values non-numeric
+                    msg = f"Column '{col}' contains only non-numeric values"
                     logger.error(f"{msg} | column={col}")
                     errors.append(msg)
         return errors
