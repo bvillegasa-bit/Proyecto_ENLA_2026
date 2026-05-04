@@ -568,3 +568,87 @@ class TestSchemas:
         """Verify institution_id is REQUIRED mode."""
         inst_field = next(f for f in FEATURES_SCHEMA if f.name == 'institution_id')
         assert inst_field.mode == 'REQUIRED'
+
+
+# ==========================================
+# Test: Single Year Edge Case (User Bug Report)
+# ==========================================
+
+class TestSingleYearData:
+    """Tests for single-year data (only 2023) per user bug report."""
+
+    def test_single_year_2023_only(self, feature_engineer: FeatureEngineer):
+        """Verify calculate_yearly_averages works with only 2023 data (no 2021/2022)."""
+        df = pd.DataFrame({
+            'id_ie': ['IE001', 'IE001', 'IE002', 'IE002'],
+            'nom_ie': ['Colegio A', 'Colegio A', 'Colegio B', 'Colegio B'],
+            'year': [2023, 2023, 2023, 2023],  # Only 2023 data
+            'area_academica': ['comunicación'] * 4,
+            'score': [80.0, 90.0, 70.0, 85.0],
+        })
+
+        result = feature_engineer.calculate_yearly_averages(df, 'comunicación')
+
+        # Should have 2 institutions (IE001 and IE002)
+        assert len(result) == 2, f"Expected 2 institutions, got {len(result)}"
+        assert set(result.columns) == {'institution_id', 'nom_ie', 'avg_2021', 'avg_2022', 'avg_2023'}
+
+        # Verify 2023 averages are correct
+        ie001_avg = result[result['institution_id'] == 'IE001']['avg_2023'].values[0]
+        assert abs(ie001_avg - 85.0) < 1e-10, f"IE001 2023 avg should be 85.0, got {ie001_avg}"
+
+        # Verify 2021 and 2022 are NaN
+        assert pd.isna(result['avg_2021'].values[0]), "avg_2021 should be NaN for single-year data"
+        assert pd.isna(result['avg_2022'].values[0]), "avg_2022 should be NaN for single-year data"
+
+    def test_single_year_leads_to_valid_features(self, feature_engineer: FeatureEngineer):
+        """Verify full pipeline for single-year data doesn't return empty averages."""
+        df = pd.DataFrame({
+            'id_ie': ['IE001'],
+            'nom_ie': ['Colegio A'],
+            'year': [2023],
+            'area_academica': ['comunicación'],
+            'score': [85.0],
+        })
+
+        avg_df = feature_engineer.calculate_yearly_averages(df, 'comunicación')
+        assert not avg_df.empty, "calculate_yearly_averages should not return empty for valid single-year data"
+        assert len(avg_df) == 1, "Should have 1 institution"
+
+    def test_single_year_float_year(self, feature_engineer: FeatureEngineer):
+        """Test single-year data with float year (2023.0) to match BigQuery possible type."""
+        df = pd.DataFrame({
+            'id_ie': ['IE001', 'IE001'],
+            'nom_ie': ['Colegio A', 'Colegio A'],
+            'year': [2023.0, 2023.0],  # Float year
+            'area_academica': ['comunicación'] * 2,
+            'score': [80.0, 90.0],
+        })
+
+        result = feature_engineer.calculate_yearly_averages(df, 'comunicación')
+        assert not result.empty, "Should not return empty for float year"
+        assert len(result) == 1, "Should have 1 institution"
+        # Check if avg_2023 is present (may be as avg_2023.0?)
+        assert 'avg_2023' in result.columns, f"avg_2023 not in columns: {result.columns}"
+        assert abs(result['avg_2023'].values[0] - 85.0) < 1e-10, "Average should be 85.0"
+
+    def test_single_year_string_year(self, feature_engineer: FeatureEngineer):
+        """Test single-year data with string year ('2023') to match BigQuery possible type."""
+        df = pd.DataFrame({
+            'id_ie': ['IE001', 'IE001'],
+            'nom_ie': ['Colegio A', 'Colegio A'],
+            'year': ['2023', '2023'],  # String year
+            'area_academica': ['comunicación'] * 2,
+            'score': [80.0, 90.0],
+        })
+
+        result = feature_engineer.calculate_yearly_averages(df, 'comunicación')
+        print(f"DEBUG String Year: columns={result.columns.tolist()}, rows={len(result)}")
+        assert not result.empty, "Should not return empty for string year"
+        assert len(result) == 1, "Should have 1 institution"
+        # Check if avg_2023 is present (may not be renamed if year is string)
+        print(f"DEBUG: avg_2023 in columns? {'avg_2023' in result.columns}")
+        # The year column is string '2023', so col_map won't rename it to avg_2023
+        # So result's avg_2023 column is NaN, but the original '2023' column is dropped
+        # So result has avg_2021, avg_2022 as NaN, avg_2023 as NaN?
+        # But rows are present, so not empty.

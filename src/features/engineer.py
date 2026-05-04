@@ -147,34 +147,26 @@ class FeatureEngineer:
             return pd.DataFrame(columns=['institution_id', 'nom_ie', 'avg_2021', 'avg_2022', 'avg_2023'])
 
         # Group by institution and year, compute mean (averages across sections)
-        yearly = area_df.groupby(['id_ie', 'nom_ie', 'year'])['score'].mean().reset_index()
+        # Use as_index=False to keep group keys as columns
+        yearly = area_df.groupby(['id_ie', 'nom_ie', 'year'], as_index=False)['score'].mean()
 
-        # Pivot years into columns
-        pivoted = yearly.pivot_table(
-            index=['id_ie', 'nom_ie'],
-            columns='year',
-            values='score',
-            aggfunc='mean'
-        ).reset_index()
+        # Initialize result with unique institutions
+        result = yearly[['id_ie', 'nom_ie']].drop_duplicates().copy()
 
-        # Rename columns to standard names
-        col_map = {}
+        # Add year columns manually (avoid pivot_table issues with single-year data)
         for year in YEARS:
-            if year in pivoted.columns:
-                col_map[year] = f'avg_{year}'
+            year_data = yearly[yearly['year'] == year]
+            if not year_data.empty:
+                # Map id_ie to average score for this year
+                avg_map = dict(zip(year_data['id_ie'], year_data['score']))
+                result[f'avg_{year}'] = result['id_ie'].map(avg_map)
+            else:
+                result[f'avg_{year}'] = np.nan
 
-        pivoted = pivoted.rename(columns=col_map)
-
-        # Ensure all year columns exist (fill missing with NaN)
-        for year in YEARS:
-            col = f'avg_{year}'
-            if col not in pivoted.columns:
-                pivoted[col] = np.nan
-
-        result = pivoted[['id_ie', 'nom_ie', 'avg_2021', 'avg_2022', 'avg_2023']].copy()
+        # Rename id_ie to institution_id
         result = result.rename(columns={'id_ie': 'institution_id'})
 
-        logger.info(f"Yearly averages calculated | area={area} institutions={len(result)} years_with_data={[y for y in YEARS if f'avg_{y}' in result.columns]}")
+        logger.info(f"Yearly averages calculated | area={area} institutions={len(result)} years_with_data={[y for y in YEARS if not result[f'avg_{y}'].isna().all()]}")
 
         return result
 
