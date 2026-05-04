@@ -129,8 +129,8 @@ class FeatureEngineer:
         NULL scores are excluded from averages (not treated as 0).
 
         Args:
-            df: DataFrame from fact_enla with columns: id_ie, nom_ie, year, area, score
-            area: Subject area to filter for
+            df: DataFrame from fact_enla with columns: id_ie, nom_ie, year, area_academica, score
+            area: Subject area to filter for (comunicacion, matematica, ccss, cyt)
 
         Returns:
             DataFrame with columns: institution_id, nom_ie, avg_2021, avg_2022, avg_2023
@@ -139,7 +139,7 @@ class FeatureEngineer:
         logger.info(f"Calculating yearly averages | area={area} input_rows={len(df)}")
 
         # Filter to the target area and exclude NULL scores
-        area_df = df[df['area'] == area].copy()
+        area_df = df[df['area_academica'] == area].copy()
         area_df = area_df.dropna(subset=['score'])
 
         if area_df.empty:
@@ -401,9 +401,9 @@ class FeatureEngineer:
         # Step 1: Query data
         bq_manager = self._get_bq_manager()
         query = f"""
-            SELECT id_ie, nom_ie, year, area, score
+            SELECT id_ie, nom_ie, year, area_academica, score
             FROM `{bq_manager.project_id}.{self.dataset_id}.fact_enla`
-            WHERE area = '{area}'
+            WHERE area_academica = '{area}'
             AND year IN (2021, 2022, 2023)
         """
         logger.info("Querying fact_enla", area=area)
