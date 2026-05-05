@@ -98,7 +98,7 @@ class ModelTrainer:
                  dataset_id: Optional[str] = None,
                  l2_reg: float = 0.1,
                  max_iterations: int = 20,
-                 learn_rate: float = 0.1):
+                 ls_init_learn_rate: float = 0.1):
         """
         Initialize ModelTrainer.
 
@@ -108,16 +108,16 @@ class ModelTrainer:
             dataset_id: BigQuery dataset ID. If None, reads from settings.
             l2_reg: L2 regularization parameter.
             max_iterations: Maximum training iterations.
-            learn_rate: Learning rate for optimization.
+            ls_init_learn_rate: Learning rate for optimization.
         """
         self.bq_manager = bigquery_client
         self.project_id = project_id or settings.GCP_PROJECT_ID
         self.dataset_id = dataset_id or settings.GCP_DATASET_ID
         self.l2_reg = l2_reg
         self.max_iterations = max_iterations
-        self.learn_rate = learn_rate
+        self.ls_init_learn_rate = ls_init_learn_rate
 
-        logger.info(f"ModelTrainer initialized | project_id={self.project_id} dataset_id={self.dataset_id} areas={self.AREAS} l2_reg={self.l2_reg} max_iterations={self.max_iterations} learn_rate={self.learn_rate}")
+        logger.info(f"ModelTrainer initialized | project_id={self.project_id} dataset_id={self.dataset_id} areas={self.AREAS} l2_reg={self.l2_reg} max_iterations={self.max_iterations} ls_init_learn_rate={self.ls_init_learn_rate}")
 
     def _get_bq_manager(self) -> BigQueryClientManager:
         """Get or create BigQuery manager."""
@@ -151,7 +151,7 @@ class ModelTrainer:
             data_split_col='split',
             l2_reg={self.l2_reg},
             max_iterations={self.max_iterations},
-            learn_rate={self.learn_rate},
+             ls_init_learn_rate={self.ls_init_learn_rate},
             early_stop=True
         ) AS
         SELECT
@@ -441,7 +441,7 @@ class ModelTrainer:
             check_query = f"""
             SELECT COUNT(*) as model_count
             FROM `{self.project_id}.{self.dataset_id}.INFORMATION_SCHEMA.MODELS`
-            WHERE model_name = 'enla_model_{area}_{model_version}'
+            WHERE schema_name = '{self.dataset_id}' AND model_name = 'enla_model_{area}_{model_version}'
             """
 
             result_df = bq_manager.query(check_query).to_dataframe()
@@ -499,7 +499,7 @@ class ModelTrainer:
 def run_model_training(bigquery_client: Optional[BigQueryClientManager] = None,
                        l2_reg: float = 0.1,
                        max_iterations: int = 20,
-                       learn_rate: float = 0.1) -> ModelTrainingPipelineResult:
+                       ls_init_learn_rate: float = 0.1) -> ModelTrainingPipelineResult:
     """
     Run the complete model training pipeline.
 
@@ -507,7 +507,7 @@ def run_model_training(bigquery_client: Optional[BigQueryClientManager] = None,
         bigquery_client: BigQueryClientManager instance (optional)
         l2_reg: L2 regularization parameter
         max_iterations: Maximum training iterations
-        learn_rate: Learning rate for optimization
+        ls_init_learn_rate: Learning rate for optimization
 
     Returns:
         ModelTrainingPipelineResult with execution summary
@@ -516,6 +516,6 @@ def run_model_training(bigquery_client: Optional[BigQueryClientManager] = None,
         bigquery_client=bigquery_client,
         l2_reg=l2_reg,
         max_iterations=max_iterations,
-        learn_rate=learn_rate,
+        ls_init_learn_rate=ls_init_learn_rate,
     )
     return trainer.train_all_models()
