@@ -19,7 +19,7 @@ from src.etl.transform import (
     ETLTransformError,
     DataQualitySummary,
     ETLResult,
-    AREA_PATTERNS,
+    STANDARDIZED_AREAS,
     run_etl_pipeline,
 )
 from src.etl.schemas import FACT_ENLA_SCHEMA, ENLA_CALLAO_CLEANED_SCHEMA

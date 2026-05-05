@@ -35,28 +35,25 @@ logger = get_logger('etl_transform')
 
 
 # ==========================================
-# Accent Normalization (Defensive Coding)
+# Accent Normalization (Display Only)
 # ==========================================
 
-# Normalize common accent variations to match user's data
-# User said: "comunicación y matemática" (WITH accents!)
-ACCENT_NORMALIZATION = {
+# For display purposes only - column names are now standardized without accents
+ACCENT_NORMALIZATION_DISPLAY = {
     'comunicacion': 'comunicación',
-    'comunicacion': 'comunicación',  # without accent → with accent
     'matematica': 'matemática',
-    'matematica': 'matemática',  # without accent → with accent
 }
 
 def normalize_area_name(area_name: str) -> str:
-    """Normalize area name to handle accent variations.
+    """Normalize area name for display (add accents).
     
     Args:
-        area_name: Raw area name from data
+        area_name: Area key (without accents)
         
     Returns:
-        Normalized area name with correct accents
+        Display name with correct accents
     """
-    return ACCENT_NORMALIZATION.get(area_name.lower(), area_name)
+    return ACCENT_NORMALIZATION_DISPLAY.get(area_name.lower(), area_name)
 
 
 # ==========================================
@@ -113,55 +110,41 @@ class ETLResult:
 
 
 # ==========================================
-# Area Patterns Configuration (Module Level)
+# Standardized Area Configuration (Module Level)
 # ==========================================
 
-# Academic area patterns for DYNAMIC column discovery
-# Column names CHANGE per year - we use regex to discover actual column names
-# NOTE: Keys use ACCENTED names as per user requirement: "comunicación y matemática" (WITH accents!)
-AREA_PATTERNS = {
-    'comunicación': {
+# After column standardization (SDD standardize-columns), all column names are now
+# in snake_case format. We use the standardized names directly.
+# Keys use UNACCENTED names to match UNIFIED_SCHEMA from column_mapping.py
+STANDARDIZED_AREAS = {
+    'comunicacion': {
         'display_name': 'Comunicación',
-        # 2023 format: M500_EM_2S_2023_CT (ends with CT)
-        # 2022 format: medida500_L (ends with L, may or may not have underscore)
-        'measure_patterns': [r'M500.*_CT$', r'^medida.*_L$', r'^medida.*L$', r'M500.*L$'],
-        'group_patterns': [r'grupo.*_CT$', r'^grupo.*_L$', r'^grupo.*L$'],
-        'weight_patterns': [r'^peso.*_CT$', r'^peso.*_L$', r'^pes_o.*_L$', r'^pes_o.*L$'],
-        'required': True,  # OBLIGATORY area (user: "comunicación... son obligatorias")
+        'measure': 'medida_lectura',
+        'group': 'grupo_lectura',
+        'weight': 'peso_lectura',
+        'required': True,  # OBLIGATORY area
     },
-    'matemática': {
+    'matematica': {
         'display_name': 'Matemática',
-        # 2023 format: M500_EM_2S_2023_MA (ends with MA)
-        # 2022 format: medida500_M (ends with M, may or may not have underscore)
-        'measure_patterns': [r'M500.*_MA$', r'^medida.*_M$', r'^medida.*M$', r'M500.*M$'],
-        'group_patterns': [r'grupo.*_MA$', r'^grupo.*_M$', r'^grupo.*M$'],
-        'weight_patterns': [r'^peso.*_MA$', r'^peso.*_M$', r'^pes_o.*_M$', r'^pes_o.*M$'],
-        'required': True,  # OBLIGATORY area (user: "matemática... son obligatorias")
+        'measure': 'medida_matematica',
+        'group': 'grupo_matematica',
+        'weight': 'peso_matematica',
+        'required': True,  # OBLIGATORY area
     },
     'ccss': {
         'display_name': 'Ciencias Sociales',
-        # 2023 format: M500_EM_2S_2023_CS (ends with CS)
-        # 2022 format: medida500_CN (ends with CN, may or may not have underscore)
-        'measure_patterns': [r'M500.*_CS$', r'^medida.*_CN$', r'^medida.*CN$', r'M500.*CN$'],
-        'group_patterns': [r'grupo.*_CS$', r'^grupo.*_CN$', r'^grupo.*CN$'],
-        'weight_patterns': [r'^peso.*_CS$', r'^peso.*_CN$', r'^pes_o.*_CN$', r'^pes_o.*CN$'],
+        'measure': 'medida_ciencias',
+        'group': 'grupo_ciencias',
+        'weight': 'peso_ciencias',
         'required': False,  # OPTIONAL area
     },
-    'cyt': {
-        'display_name': 'Ciencia y Tecnología',
-        # 2023 format: M500_EM_2S_2023_CY (ends with CY)
-        'measure_patterns': [r'M500.*_CY$'],
-        'group_patterns': [r'grupo.*_CY$'],
-        'weight_patterns': [r'^peso.*_CY$'],
-        'required': False,  # OPTIONAL area
-    }
 }
 
-AREA_DISPLAY_NAMES: Dict[str, str] = {
-    area: config['display_name'] for area, config in AREA_PATTERNS.items()
+# Accent normalization for display purposes (not for column matching)
+ACCENT_NORMALIZATION_DISPLAY = {
+    'comunicacion': 'comunicación',
+    'matematica': 'matemática',
 }
-# NOTE: AREA_PATTERNS keys now use accents: 'comunicación', 'matemática'
-# This matches user's data: "comunicación y matemática son obligatorias" (WITH accents!)
 
 
 # ==========================================
@@ -270,9 +253,10 @@ class ETLTransform:
                 """Convert DataFrame columns to string if schema expects STRING."""
                 for field in schema:
                     if field.field_type == 'STRING' and field.name in df.columns:
-                        if df[field.name].dtype == 'int64':
-                            logger.info(f"Converting {field.name} to string in {df_name}")
-                            df[field.name] = df[field.name].astype(str).replace('nan', '')
+                        # Convert any numeric type (int64, float64) to string
+                        if df[field.name].dtype in ['int64', 'float64']:
+                            logger.info(f"Converting {field.name} ({df[field.name].dtype}) to string in {df_name}")
+                            df[field.name] = df[field.name].fillna('').astype(str).replace('nan', '').replace('<NA>', '')
                 return df
             
             cleaned_df = convert_string_columns(cleaned_df, ENLA_CALLAO_CLEANED_SCHEMA, 'cleaned_df')
@@ -422,21 +406,6 @@ class ETLTransform:
         logger.info(f"Transform input columns ({len(raw_df.columns)}): {list(raw_df.columns)[:20]}...")
         logger.info(f"Year parameter: {year}")
         
-        # Create case-insensitive column mapping
-        col_mapping = {col.lower(): col for col in raw_df.columns}
-        
-        def get_column(df, possible_names):
-            """Get column from DataFrame, trying multiple case variations."""
-            for name in possible_names:
-                if name in df.columns:
-                    return df[name]
-                lower_name = name.lower()
-                if lower_name in col_mapping:
-                    actual_col = col_mapping[lower_name]
-                    logger.info(f"Column '{name}' found as '{actual_col}' (case-insensitive)")
-                    return df[actual_col]
-            raise KeyError(f"Column not found. Tried: {possible_names}. Available: {list(df.columns)[:10]}")
-        
         # Determine year
         if year is None:
             try:
@@ -456,59 +425,34 @@ class ETLTransform:
         logger.info(f"Processing data for year: {year}")
         
         # ==========================================
-        # DYNAMIC COLUMN DISCOVERY
+        # STANDARDIZED COLUMN MAPPING
         # ==========================================
+        # After column standardization, we use standardized names directly
+        # Columns are already renamed in MongoDB (by ingest_enla.py using column_mapping.py)
         area_columns = {}  # {area_name: {'measure': col, 'group': col, 'weight': col}}
-        import sys
         
-        for area_name, patterns in AREA_PATTERNS.items():
-            found_cols = {'measure': None, 'group': None, 'weight': None}
-            print(f"DEBUG: Processing area '{area_name}'", file=sys.stderr)
+        for area_key, config in STANDARDIZED_AREAS.items():
+            measure_col = config['measure']
+            group_col = config['group']
+            weight_col = config['weight']
             
-            # Search for measure column
-            for col in raw_df.columns:
-                print(f"DEBUG:   Checking column '{col}' for area '{area_name}'", file=sys.stderr)
-                for pattern in patterns['measure_patterns']:
-                    if re.search(pattern, col, re.IGNORECASE):
-                        found_cols['measure'] = col
-                        print(f"DEBUG:     Found measure: {col} (pattern: {pattern})", file=sys.stderr)
-                        break
-                if found_cols['measure']:
-                    break
-                if found_cols['measure']:
-                    break
-            
-            # Search for group column
-            for col in raw_df.columns:
-                for pattern in patterns['group_patterns']:
-                    if re.search(pattern, col, re.IGNORECASE):
-                        found_cols['group'] = col
-                        break
-                if found_cols['group']:
-                    break
-            
-            # Search for weight column
-            for col in raw_df.columns:
-                for pattern in patterns['weight_patterns']:
-                    if re.search(pattern, col, re.IGNORECASE):
-                        found_cols['weight'] = col
-                        break
-                if found_cols['weight']:
-                    break
-            
-            # Check if this area has data
-            if found_cols['measure'] and found_cols['group']:
-                area_columns[area_name] = found_cols
-                logger.info(f"✓ Found '{area_name}': measure={found_cols['measure']}, group={found_cols['group']}, weight={found_cols['weight']}")
+            # Check if the standardized columns exist in the DataFrame
+            if measure_col in raw_df.columns and group_col in raw_df.columns:
+                area_columns[area_key] = {
+                    'measure': measure_col,
+                    'group': group_col,
+                    'weight': weight_col if weight_col in raw_df.columns else None
+                }
+                logger.info(f"✓ Found '{area_key}': measure={measure_col}, group={group_col}, weight={weight_col}")
             else:
-                if patterns['required']:
-                    logger.error(f"✗ REQUIRED area '{area_name}' NOT FOUND! measure={found_cols['measure']}, group={found_cols['group']}")
-                    raise ETLTransformError(f"REQUIRED area '{area_name}' not found in data. Available columns: {list(raw_df.columns)[:10]}")
+                if config['required']:
+                    logger.error(f"✗ REQUIRED area '{area_key}' NOT FOUND! measure_exists={measure_col in raw_df.columns}, group_exists={group_col in raw_df.columns}")
+                    raise ETLTransformError(f"REQUIRED area '{area_key}' not found. Expected columns: {measure_col}, {group_col}. Available: {list(raw_df.columns)[:15]}")
                 else:
-                    logger.info(f"- Optional area '{area_name}' not present (OK)")
+                    logger.info(f"- Optional area '{area_key}' not present (OK)")
         
         if not area_columns:
-            msg = f"No academic area columns found! Available: {list(raw_df.columns)[:20]}"
+            msg = f"No academic area columns found! Expected standardized columns. Available: {list(raw_df.columns)[:20]}"
             logger.error(msg)
             raise ETLTransformError(msg)
         
@@ -519,31 +463,31 @@ class ETLTransform:
         
         # DEBUG: Print area_columns to understand what was discovered
         logger.info(f"area_columns to process: {area_columns}")
-        import sys
-        print(f"DEBUG: area_columns = {area_columns}", file=sys.stderr)
         
-        for area_name, cols in area_columns.items():
+        for area_key, cols in area_columns.items():
             try:
+                # Normalize area name for display (add accents)
+                area_display = ACCENT_NORMALIZATION_DISPLAY.get(area_key, area_key)
+                
                 # Handle comma as decimal separator (common in Latin American Excel files)
                 measure_raw = raw_df[cols['measure']].astype(str)
                 measure_clean = measure_raw.str.replace(',', '.', regex=False)
                 scores = pd.to_numeric(measure_clean, errors='coerce')
                 
                 # DEBUG: Print what column we're using
-                logger.info(f"Processing area '{area_name}', using score column: {cols['measure']}")
+                logger.info(f"Processing '{area_display}', using score column: {cols['measure']}")
                 logger.info(f"  Sample raw values: {list(measure_raw[:3])}")
                 logger.info(f"  Sample cleaned scores: {list(scores[:3])}")
-                print(f"DEBUG: Processing {area_name}, column={cols['measure']}, scores={list(scores[:3])}", file=sys.stderr)
                 
                 area_df = pd.DataFrame({
-                    'id_ie': get_column(raw_df, ['ID_IE', 'id_ie']),
-                    'id_seccion': get_column(raw_df, ['ID_SECCION', 'id_seccion']),
-                    'nom_ie': get_column(raw_df, ['nom_ie', 'NOM_IE']) if 'nom_ie' in col_mapping or 'NOM_IE' in raw_df.columns else None,
-                    'nom_dre': get_column(raw_df, ['nom_dre', 'NOM_DRE']) if 'nom_dre' in col_mapping or 'NOM_DRE' in raw_df.columns else None,
+                    'id_ie': raw_df['id_ie'],
+                    'id_seccion': raw_df['id_seccion'],
+                    'nom_ie': raw_df['nom_ie'] if 'nom_ie' in raw_df.columns else None,
+                    'nom_dre': raw_df['nom_dre'] if 'nom_dre' in raw_df.columns else None,
                     'year': year,
-                    'area': get_column(raw_df, ['area', 'AREA']),
-                    'cor_est': get_column(raw_df, ['cor_est', 'COR_EST']),
-                    'area_academica': normalize_area_name(area_name),  # Normalize accents!
+                    'area': raw_df['area'] if 'area' in raw_df.columns else None,
+                    'cor_est': raw_df['cor_est'],
+                    'area_academica': area_display,  # Use accent-normalized name for display
                     'score': scores,
                     'grupo': raw_df[cols['group']] if cols['group'] in raw_df.columns else None,
                     'peso': raw_df[cols['weight']] if cols['weight'] and cols['weight'] in raw_df.columns else None,
@@ -555,11 +499,11 @@ class ETLTransform:
                 logger.info(f"Processed '{area_name}': {len(area_df)} records (null: {scores.isna().sum()})")
                 
             except KeyError as e:
-                if AREA_PATTERNS[area_name]['required']:
-                    logger.error(f"Failed to process REQUIRED area '{area_name}': {e}")
+                if STANDARDIZED_AREAS[area_key]['required']:
+                    logger.error(f"Failed to process REQUIRED area '{area_key}': {e}")
                     raise
                 else:
-                    logger.warning(f"Failed to process optional area '{area_name}': {e} (skipping)")
+                    logger.warning(f"Failed to process optional area '{area_key}': {e} (skipping)")
         
         if not all_records:
             msg = "No records created during transformation"
