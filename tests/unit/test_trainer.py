@@ -37,7 +37,6 @@ def mock_bq_manager():
     manager = MagicMock()
     manager.project_id = 'test-project'
     manager.dataset_id = 'BI_ENLA'
-    manager.get_client.return_value = MagicMock()
     return manager
 
 
@@ -192,7 +191,7 @@ class TestTrainModelForArea:
 
     def test_train_model_bq_error(self, trainer: ModelTrainer):
         """Verify BigQuery error is handled gracefully."""
-        trainer.bq_manager.get_client.return_value.query.side_effect = BigQueryConnectionError("Connection failed")
+        trainer.bq_manager.query.side_effect = BigQueryConnectionError("Connection failed")
 
         # User said: "comunicación y matemática" (WITH accents!)
         result = trainer.train_model_for_area('comunicación')
@@ -211,7 +210,7 @@ class TestTrainAllModels:
 
     def test_train_all_models_success(self, trainer: ModelTrainer, mock_query_job):
         """Verify all models train successfully."""
-        trainer.bq_manager.get_client.return_value.query.return_value = mock_query_job
+        trainer.bq_manager.query.return_value = mock_query_job
 
         result = trainer.train_all_models()
 
@@ -231,7 +230,7 @@ class TestTrainAllModels:
                 raise BigQueryConnectionError("CCSS training failed")
             return mock_query_job
 
-        trainer.bq_manager.get_client.return_value.query.side_effect = mock_query
+        trainer.bq_manager.query.side_effect = mock_query
 
         result = trainer.train_all_models()
 
@@ -250,7 +249,7 @@ class TestTrainAllModels:
             call_count[0] += 1
             return original_time() + call_count[0]  # Simulate 1 second per call
 
-        trainer.bq_manager.get_client.return_value.query.return_value = mock_query_job
+        trainer.bq_manager.query.return_value = mock_query_job
 
         with patch('time.time', side_effect=mock_time):
             result = trainer.train_all_models()
@@ -280,7 +279,9 @@ class TestEvaluateModel:
             'false_positives': [5],
             'false_negatives': [8],
         }
-        trainer.bq_manager.query.return_value = pd.DataFrame(eval_data)
+        mock_job = MagicMock()
+        mock_job.to_dataframe.return_value = pd.DataFrame(eval_data)
+        trainer.bq_manager.query.return_value = mock_job
 
         result = trainer.evaluate_model('comunicacion')
 
@@ -297,7 +298,9 @@ class TestEvaluateModel:
 
     def test_evaluate_model_empty_result(self, trainer: ModelTrainer):
         """Verify empty evaluation result raises error."""
-        trainer.bq_manager.query.return_value = pd.DataFrame()
+        mock_job = MagicMock()
+        mock_job.to_dataframe.return_value = pd.DataFrame()
+        trainer.bq_manager.query.return_value = mock_job
 
         with pytest.raises(ModelEvaluationError):
             trainer.evaluate_model('comunicacion')
@@ -324,7 +327,9 @@ class TestFeatureWeights:
             'weight': [0.3, 0.25, 0.2, 0.15, 0.1, 0.0],
             'processing_method': ['none'] * 5 + [''],
         }
-        trainer.bq_manager.query.return_value = pd.DataFrame(weights_data)
+        mock_job = MagicMock()
+        mock_job.to_dataframe.return_value = pd.DataFrame(weights_data)
+        trainer.bq_manager.query.return_value = mock_job
 
         result = trainer.get_feature_weights('comunicacion')
 
@@ -349,7 +354,9 @@ class TestCheckModelExists:
 
     def test_model_exists_true(self, trainer: ModelTrainer):
         """Verify returns True when model exists."""
-        trainer.bq_manager.query.return_value = pd.DataFrame({'model_count': [1]})
+        mock_job = MagicMock()
+        mock_job.to_dataframe.return_value = pd.DataFrame({'model_count': [1]})
+        trainer.bq_manager.query.return_value = mock_job
 
         result = trainer.check_model_exists('comunicacion')
 
@@ -357,7 +364,9 @@ class TestCheckModelExists:
 
     def test_model_exists_false(self, trainer: ModelTrainer):
         """Verify returns False when model does not exist."""
-        trainer.bq_manager.query.return_value = pd.DataFrame({'model_count': [0]})
+        mock_job = MagicMock()
+        mock_job.to_dataframe.return_value = pd.DataFrame({'model_count': [0]})
+        trainer.bq_manager.query.return_value = mock_job
 
         result = trainer.check_model_exists('comunicacion')
 
@@ -381,25 +390,25 @@ class TestDeleteModel:
 
     def test_delete_model_success(self, trainer: ModelTrainer):
         """Verify model deletion succeeds."""
-        trainer.bq_manager.get_client.return_value.delete_model.return_value = None
+        trainer.bq_manager.delete_model.return_value = None
 
         result = trainer.delete_model('comunicacion')
 
         assert result == True
-        trainer.bq_manager.get_client.return_value.delete_model.assert_called_once()
+        trainer.bq_manager.delete_model.assert_called_once()
 
     def test_delete_model_not_found_ok(self, trainer: ModelTrainer):
         """Verify deletion with not_found_ok=True."""
-        trainer.bq_manager.get_client.return_value.delete_model.return_value = None
+        trainer.bq_manager.delete_model.return_value = None
 
         trainer.delete_model('comunicacion')
 
-        call_args = trainer.bq_manager.get_client.return_value.delete_model.call_args
+        call_args = trainer.bq_manager.delete_model.call_args
         assert call_args.kwargs.get('not_found_ok', call_args[1].get('not_found_ok')) == True
 
     def test_delete_model_error_returns_false(self, trainer: ModelTrainer):
         """Verify returns False on deletion error."""
-        trainer.bq_manager.get_client.return_value.delete_model.side_effect = Exception("Delete failed")
+        trainer.bq_manager.delete_model.side_effect = Exception("Delete failed")
 
         result = trainer.delete_model('comunicacion')
 

@@ -133,7 +133,7 @@ class AlertManager:
         self.dataset_id = dataset_id or settings.GCP_DATASET_ID
         self.sendgrid_api_key = sendgrid_api_key or settings.SENDGRID_API_KEY
         self.email_from = email_from or settings.ALERT_EMAIL_FROM
-        self.email_to = email_to or settings.ALERT_EMAIL_TO
+        self.email_to = email_to if email_to is not None else settings.ALERT_EMAIL_TO
 
         logger.info(f"AlertManager initialized | project_id={self.project_id} dataset_id={self.dataset_id} email_from={self.email_from} recipients_count={len(self.email_to) if self.email_to else 0}")
 
