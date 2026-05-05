@@ -55,15 +55,15 @@ class ENLAIngestor:
     7. Log audit trail
     """
     
-    # Core columns that should be present in ALL years (case-sensitive from Excel)
+    # Core columns that should be present in ALL years (all lowercase - normalized after read)
     CORE_COLUMNS = {
-        'ID_IE', 'ID_SECCION', 'nom_ie', 'nom_dre',
+        'id_ie', 'id_seccion', 'nom_ie', 'nom_dre',
         'grado_evaluacion',
         'cor_est', 'area',  # cor_est = student ID, area = geographic zone
     }
     
     # UPSERT_KEY uses ano_evaluacion (will be added from filename if not present)
-    UPSERT_KEY = ['ID_IE', 'ID_SECCION', 'ano_evaluacion']
+    UPSERT_KEY = ['id_ie', 'id_seccion', 'ano_evaluacion']
     
     def __init__(
         self,
@@ -114,17 +114,17 @@ class ENLAIngestor:
             self.client.close()
             logger.info("MongoDB connection closed")
     
-    def read_excel(self, file_path: str, year: Optional[int] = None, encoding: str = 'latin-1') -> pd.DataFrame:
+    def read_excel(self, file_path: str, year: Optional[int] = None) -> pd.DataFrame:
         """
-        Read Excel file with encoding handling.
+        Read Excel file. Excel files are binary (openpyxl handles encoding internally).
+        All column names are normalized to lowercase and stripped of whitespace.
         
         Args:
             file_path: Path to Excel file
             year: Year to add as 'ano_evaluacion' column (extracted from filename)
-            encoding: Primary encoding (default: latin-1, fallback: utf-8)
         
         Returns:
-            DataFrame with 'ano_evaluacion' column added if year is provided
+            DataFrame with normalized column names and 'ano_evaluacion' column added if needed
         """
         path = Path(file_path)
         
@@ -134,21 +134,20 @@ class ENLAIngestor:
             raise FileNotFoundError(msg)
         
         try:
-            # Try primary encoding
-            df = pd.read_excel(path, encoding=encoding)
-            logger.info(f"Excel file read successfully | file_path={str(path)} rows={len(df)} encoding={encoding}")
-        except (UnicodeDecodeError, Exception) as e:
-            logger.warning(f"Primary encoding failed, trying utf-8 | file_path={str(path)} error={str(e)}")
-            try:
-                df = pd.read_excel(path, encoding='utf-8')
-                logger.info(f"Excel file read with utf-8 | file_path={str(path)} rows={len(df)}")
-            except Exception as e2:
-                msg = f"Cannot read Excel file: {str(e2)}"
-                logger.error(msg)
-                raise IngestionError(msg)
+            # pd.read_excel does NOT accept an 'encoding' parameter — Excel files are binary.
+            # openpyxl (the default engine) handles character encoding internally.
+            df = pd.read_excel(path, engine='openpyxl')
+            logger.info(f"Excel file read successfully | file_path={str(path)} rows={len(df)}")
+        except Exception as e:
+            msg = f"Cannot read Excel file: {str(e)}"
+            logger.error(msg)
+            raise IngestionError(msg)
         
-        # NOTE: Preserve original column names (mixed case from Excel)
-        df.columns = df.columns.str.strip()  # Only strip whitespace, preserve case
+        # FIX Bug 2: Normalize ALL column names to lowercase + strip whitespace.
+        # MINEDU Excel files have mixed-case headers (ID_IE, nom_ie, NOM_DRE, etc.).
+        # Normalizing ensures consistent access throughout the entire pipeline.
+        df.columns = df.columns.str.strip().str.lower()
+        logger.info(f"Column names normalized to lowercase | columns={list(df.columns)[:15]}")
         
         # Add year column from filename if not present in data
         if year and 'ano_evaluacion' not in df.columns:
@@ -189,7 +188,12 @@ class ENLAIngestor:
         # Apply filters
         df = df[df['nom_dre'] == region.upper()]
         
+        # FIX Bug 7: Normalize grado_evaluacion to numeric before comparing.
+        # MINEDU Excel files may store the grade as a string ("2") or even text ("Segundo").
+        # pd.to_numeric(..., errors='coerce') converts safely — non-numeric becomes NaN.
         if 'grado_evaluacion' in df.columns:
+            df = df.copy()  # avoid SettingWithCopyWarning
+            df['grado_evaluacion'] = pd.to_numeric(df['grado_evaluacion'], errors='coerce')
             df = df[df['grado_evaluacion'] == grado]
         
         # Filter by year - if specific year provided, filter to that year only

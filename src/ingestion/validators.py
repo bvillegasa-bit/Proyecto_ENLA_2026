@@ -29,9 +29,9 @@ class ENLAValidator:
     - etc.
     """
     
-    # Core columns that should be present in ALL years
+    # Core columns that should be present in ALL years (all lowercase — normalized by ingest_enla.py)
     CORE_COLUMNS = {
-        'ID_IE', 'ID_SECCION', 'nom_ie', 'nom_dre',
+        'id_ie', 'id_seccion', 'nom_ie', 'nom_dre',
         'ano_evaluacion', 'grado_evaluacion',
         'cor_est', 'area',  # cor_est = student ID, area = geographic zone
     }
@@ -193,7 +193,7 @@ class ENLAValidator:
         """Check critical columns for NULL values."""
         warnings = []
         # Core critical columns + discovered score columns
-        critical_cols = ['ID_IE', 'ID_SECCION', 'ano_evaluacion'] + self._discovered_score_columns
+        critical_cols = ['id_ie', 'id_seccion', 'ano_evaluacion'] + self._discovered_score_columns
         
         for col in critical_cols:
             if col in df.columns:
@@ -207,7 +207,7 @@ class ENLAValidator:
     def _validate_duplicates(self, df: pd.DataFrame) -> List[str]:
         """Identify duplicate rows based on key columns."""
         warnings = []
-        key_cols = ['ID_IE', 'ID_SECCION', 'ano_evaluacion']
+        key_cols = ['id_ie', 'id_seccion', 'ano_evaluacion']
         
         if all(col in df.columns for col in key_cols):
             duplicates = df.duplicated(subset=key_cols, keep=False)
@@ -230,7 +230,7 @@ class ENLAValidator:
         
         # Null coverage (%)
         null_coverage = {}
-        for col in self.CORE_COLUMNS:
+        for col in self.CORE_COLUMNS:  # CORE_COLUMNS already lowercase
             if col in df.columns:
                 null_pct = (df[col].isna().sum() / len(df)) * 100
                 null_coverage[col] = round(null_pct, 2)

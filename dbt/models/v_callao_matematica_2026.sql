@@ -31,4 +31,4 @@ FROM {{ source('enla_raw', 'enla_callao_features') }} f
 LEFT JOIN {{ source('enla_raw', 'enla_callao_predictions_2026') }} p
   ON f.institution_id = p.institution_id
   AND f.area = p.area
-WHERE f.area = 'matematica'
+WHERE f.area = 'matemática'

@@ -620,9 +620,6 @@ class ETLTransform:
         
         logger.info(f"dim_meta created | count={len(dim_meta_df)}")
         return dim_meta_df
-        
-        logger.info(f"dim_meta created | count={len(dim_meta_df)}")
-        return dim_meta_df
     
     def _create_dim_calendario(self, cleaned_df: pd.DataFrame) -> pd.DataFrame:
         """Create dim_calendario table with date dimension for analysis."""
