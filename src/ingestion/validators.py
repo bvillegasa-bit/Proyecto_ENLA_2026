@@ -33,12 +33,20 @@ class ENLAValidator:
         'cor_est', 'area',  # cor_est = student ID, area = geographic zone
     }
 
-    # Assessment score columns (standardized names)
-    SCORE_COLUMNS = [
-        'medida_lectura', 'grupo_lectura', 'peso_lectura',
-        'medida_matematica', 'grupo_matematica', 'peso_matematica',
-        'medida_ciencias', 'grupo_ciencias', 'peso_ciencias',
+    # Numeric assessment columns (scores and weights)
+    NUMERIC_COLUMNS = [
+        'medida_lectura', 'peso_lectura',
+        'medida_matematica', 'peso_matematica',
+        'medida_ciencias', 'peso_ciencias',
     ]
+
+    # Categorical performance group columns (letters A/B/C/D/E)
+    GRUPO_COLUMNS = [
+        'grupo_lectura', 'grupo_matematica', 'grupo_ciencias',
+    ]
+
+    # All assessment columns (for checking presence)
+    SCORE_COLUMNS = NUMERIC_COLUMNS + GRUPO_COLUMNS
 
     def __init__(self):
         """Initialize validator."""
@@ -112,9 +120,10 @@ class ENLAValidator:
         return []
 
     def _validate_data_types(self, df: pd.DataFrame) -> List[str]:
-        """Verify that score columns are numeric, coercing non-numeric to NaN."""
+        """Verify that numeric columns are numeric, coercing non-numeric to NaN. Validate grupo columns as categorical."""
         errors = []
-        for col in self.SCORE_COLUMNS:
+        # Process numeric columns (medida_*, peso_*)
+        for col in self.NUMERIC_COLUMNS:
             if col in df.columns:
                 # Convert to numeric, coercing errors to NaN
                 numeric_col = pd.to_numeric(df[col], errors='coerce')
@@ -129,23 +138,33 @@ class ENLAValidator:
                     msg = f"Column '{col}' contains only non-numeric values"
                     logger.error(f"{msg} | column={col}")
                     errors.append(msg)
+        # Validate grupo columns (categorical: A/B/C/D/E or None)
+        valid_grupo_values = {'A', 'B', 'C', 'D', 'E', None}
+        for col in self.GRUPO_COLUMNS:
+            if col in df.columns:
+                invalid_mask = ~df[col].isin(valid_grupo_values)
+                if invalid_mask.any():
+                    invalid_count = invalid_mask.sum()
+                    msg = f"Column '{col}': {invalid_count} invalid values (expected A/B/C/D/E or None)"
+                    logger.warning(f"{msg} | column={col} count={invalid_count}")
         return errors
 
     def _validate_score_ranges(self, df: pd.DataFrame) -> List[str]:
-        """Ensure all scores are in [0, 1000]."""
+        """Ensure medida scores are in [0, 1000]. grupo and peso columns are not scored on this scale."""
         errors = []
-        for col in self.SCORE_COLUMNS:
-            if col in df.columns:
-                # Convert to numeric
-                scores = pd.to_numeric(df[col], errors='coerce')
+        # Only check medida_* columns (0-1000 scale)
+        medida_cols = [col for col in df.columns if col.startswith('medida_')]
+        for col in medida_cols:
+            # Convert to numeric
+            scores = pd.to_numeric(df[col], errors='coerce')
 
-                # Check ranges - ENLA scores are 0-1000 scale
-                invalid = ((scores < 0) | (scores > 1000))
-                if invalid.any():
-                    invalid_count = invalid.sum()
-                    msg = f"Column '{col}': {invalid_count} values out of range [0, 1000]"
-                    logger.error(f"{msg} | column={col} count={invalid_count}")
-                    errors.append(msg)
+            # Check ranges - ENLA scores are 0-1000 scale
+            invalid = ((scores < 0) | (scores > 1000))
+            if invalid.any():
+                invalid_count = invalid.sum()
+                msg = f"Column '{col}': {invalid_count} values out of range [0, 1000]"
+                logger.error(f"{msg} | column={col} count={invalid_count}")
+                errors.append(msg)
         return errors
 
     def _validate_no_nulls(self, df: pd.DataFrame) -> List[str]:
@@ -164,15 +183,16 @@ class ENLAValidator:
         return warnings
 
     def _validate_duplicates(self, df: pd.DataFrame) -> List[str]:
-        """Identify duplicate rows based on key columns."""
+        """Identify duplicate rows based on student unique key (id_ie + id_seccion + ano_evaluacion + cor_est)."""
         warnings = []
-        key_cols = ['id_ie', 'id_seccion', 'ano_evaluacion']
+        # Match UPSERT_KEY in ingest_enla.py
+        key_cols = ['id_ie', 'id_seccion', 'ano_evaluacion', 'cor_est']
 
         if all(col in df.columns for col in key_cols):
             duplicates = df.duplicated(subset=key_cols, keep=False)
             if duplicates.any():
                 dup_count = duplicates.sum()
-                msg = f"Found {dup_count} duplicate rows (by id_ie + id_seccion + ano_evaluacion)"
+                msg = f"Found {dup_count} duplicate rows (by {', '.join(key_cols)})"
                 logger.warning(f"{msg} | duplicate_count={dup_count}")
                 warnings.append(msg)
         return warnings

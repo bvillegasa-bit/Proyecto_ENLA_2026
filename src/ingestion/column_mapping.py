@@ -121,6 +121,7 @@ RENAME_2023 = {
     # Geographic
     'cod_DRE': 'cod_dre',
     'nom_DRE': 'nom_dre',
+    'nom.DRE': 'nom_dre',
     'cod_UGEL': 'cod_ugel',
     'nom_UGEL': 'nom_ugel',
     'Departamento': 'departamento',
@@ -171,6 +172,7 @@ RENAME_2022 = {
     # Geographic
     'cod_DRE': 'cod_dre',
     'nom_DRE': 'nom_dre',
+    'nom.DRE': 'nom_dre',
     'cod_UGEL': 'cod_ugel',
     'nom_UGEL': 'nom_ugel',
     'Departamento': 'departamento',

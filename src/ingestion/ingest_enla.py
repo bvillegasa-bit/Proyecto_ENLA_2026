@@ -66,8 +66,8 @@ class ENLAIngestor:
         'cor_est', 'area',  # cor_est = student ID, area = geographic zone
     }
 
-    # UPSERT_KEY uses standardized names
-    UPSERT_KEY = ['id_ie', 'id_seccion', 'ano_evaluacion']
+    # UPSERT_KEY uses standardized names (includes cor_est for unique student records)
+    UPSERT_KEY = ['id_ie', 'id_seccion', 'ano_evaluacion', 'cor_est']
     
     def __init__(
         self,
@@ -290,7 +290,10 @@ class ENLAIngestor:
         # Filter by region (columns are now standardized to 'nom_dre')
         if 'nom_dre' in df.columns:
             df.loc[:, 'nom_dre'] = df['nom_dre'].str.upper().str.strip()
+            unique_regions = df['nom_dre'].unique().tolist()
             df = df[df['nom_dre'] == region.upper()].copy()
+            if len(df) == 0:
+                logger.warning(f"Region filter returned 0 rows. Region: {region.upper()}, Unique values in nom_dre: {unique_regions}")
             logger.info(f"Filtered by region: {region}")
         else:
             logger.warning(f"No region column 'nom_dre' found, skipping region filter")
@@ -302,8 +305,8 @@ class ENLAIngestor:
                 '2do': 2, '3ro': 3, '4to': 4, '5to': 5,
                 '2': 2, '3': 3, '4': 4, '5': 5
             }
-            df.loc[:, 'grado_evaluacion'] = df['grado_evaluacion'].map(lambda x: grade_map.get(str(x), x))
-            df = df[df['grado_evaluacion'] == grado].copy()
+            df.loc[:, 'grado_evaluacion'] = df['grado_evaluacion'].map(lambda x: str(grade_map.get(str(x), x)))
+            df = df[df['grado_evaluacion'] == str(grado)].copy()
             logger.info(f"Filtered by grade: {grado}")
         else:
             logger.warning(f"No grade column 'grado_evaluacion' found, skipping grade filter")
