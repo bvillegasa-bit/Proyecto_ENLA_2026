@@ -1,0 +1,137 @@
+# Fix ENLA 2026 Pipeline – Bug Fixes
+
+## Summary
+
+After a complete code review of all source modules, I found **7 concrete bugs** that prevent the pipeline from working. None of them require architecture changes — they are all fixable in-place. The root issue is exactly what you suspected: **column name / format mismatches** between what the code expects and what actually exists.
+
+---
+
+## Bugs Found
+
+### Bug 1 — `pandas.read_excel()` does not accept `encoding` parameter
+**File:** [src/ingestion/ingest_enla.py](file:///c:/Users/User/Desktop/UCV/BUSSINES%20I%20BIG%20DATA/REPOSITORIO/Proyecto_ENLA_2026/src/ingestion/ingest_enla.py) line 138  
+`pd.read_excel(path, encoding=encoding)` → `encoding` is **not a valid parameter** for [read_excel](file:///c:/Users/User/Desktop/UCV/BUSSINES%20I%20BIG%20DATA/REPOSITORIO/Proyecto_ENLA_2026/src/ingestion/ingest_enla.py#117-163). Excel files are binary; encoding only applies to CSV. This causes a `TypeError` on the very first step of ingestion.  
+**Fix:** Remove the `encoding` parameter entirely. The `latin-1`/`utf-8` fallback logic should be removed; `openpyxl` handles Excel natively.
+
+---
+
+### Bug 2 — Column case mismatch in [ingest_enla.py](file:///c:/Users/User/Desktop/UCV/BUSSINES%20I%20BIG%20DATA/REPOSITORIO/Proyecto_ENLA_2026/src/ingestion/ingest_enla.py) `CORE_COLUMNS`
+**File:** [src/ingestion/ingest_enla.py](file:///c:/Users/User/Desktop/UCV/BUSSINES%20I%20BIG%20DATA/REPOSITORIO/Proyecto_ENLA_2026/src/ingestion/ingest_enla.py) line 59  
+`CORE_COLUMNS` defines `'ID_IE'`, `'ID_SECCION'` (uppercase), but the validator's [_validate_required_columns](file:///c:/Users/User/Desktop/UCV/BUSSINES%20I%20BIG%20DATA/REPOSITORIO/Proyecto_ENLA_2026/src/ingestion/validators.py#145-160) checks for them case-sensitively. The actual Excel files from MINEDU have them in different cases per year. The `UPSERT_KEY` also uses uppercase, but after [filter_data](file:///c:/Users/User/Desktop/UCV/BUSSINES%20I%20BIG%20DATA/REPOSITORIO/Proyecto_ENLA_2026/src/ingestion/ingest_enla.py#164-207) which normalizes `nom_dre` to uppercase but not the other columns.  
+**Fix:** Normalize column names to lowercase after reading the Excel (strip + lowercase), and update `CORE_COLUMNS`, `UPSERT_KEY`, and the validator to use lowercase consistently.
+
+---
+
+### Bug 3 — Validator `CORE_COLUMNS` requires `ano_evaluacion` but ingestor adds it AFTER reading
+**File:** [src/ingestion/validators.py](file:///c:/Users/User/Desktop/UCV/BUSSINES%20I%20BIG%20DATA/REPOSITORIO/Proyecto_ENLA_2026/src/ingestion/validators.py) line 33–37  
+`CORE_COLUMNS` includes `'ano_evaluacion'`, but in [ingest_enla.py](file:///c:/Users/User/Desktop/UCV/BUSSINES%20I%20BIG%20DATA/REPOSITORIO/Proyecto_ENLA_2026/src/ingestion/ingest_enla.py) the year column is added to the DataFrame INSIDE [read_excel()](file:///c:/Users/User/Desktop/UCV/BUSSINES%20I%20BIG%20DATA/REPOSITORIO/Proyecto_ENLA_2026/src/ingestion/ingest_enla.py#117-163) and BEFORE [validate()](file:///c:/Users/User/Desktop/UCV/BUSSINES%20I%20BIG%20DATA/REPOSITORIO/Proyecto_ENLA_2026/src/ingestion/ingest_enla.py#208-223) is called — so this should work. But the column case will fail if the Excel already has it as `ANO_EVALUACION` (uppercase).  
+**Fix:** Covered by Bug 2 (normalize to lowercase).
+
+---
+
+### Bug 4 — [config.py](file:///c:/Users/User/Desktop/UCV/BUSSINES%20I%20BIG%20DATA/REPOSITORIO/Proyecto_ENLA_2026/src/ingestion/config.py) `model_config` env_file path is wrong
+**File:** [src/ingestion/config.py](file:///c:/Users/User/Desktop/UCV/BUSSINES%20I%20BIG%20DATA/REPOSITORIO/Proyecto_ENLA_2026/src/ingestion/config.py) line 11  
+`env_file='.env'` points to the **current working directory**, but the `.env` file is in `config/.env`. When the pipeline is run from the project root (as done in GitHub Actions), it won't find the `.env` file.  
+**Fix:** Change `env_file='.env'` to `env_file='config/.env'`.
+
+---
+
+### Bug 5 — Duplicate dead code in [_create_dim_meta](file:///c:/Users/User/Desktop/UCV/BUSSINES%20I%20BIG%20DATA/REPOSITORIO/Proyecto_ENLA_2026/src/etl/transform.py#601-626)
+**File:** [src/etl/transform.py](file:///c:/Users/User/Desktop/UCV/BUSSINES%20I%20BIG%20DATA/REPOSITORIO/Proyecto_ENLA_2026/src/etl/transform.py) lines 620–625  
+After the `return dim_meta_df` statement at line 620, there are two extra dead lines (621–625) that are unreachable. While harmless, it indicates a code copy-paste error.  
+**Fix:** Remove the duplicate `logger.info` and `return` dead code.
+
+---
+
+### Bug 6 — dbt SQL views use `'comunicacion'` (no accent) but BigQuery table uses `'comunicación'` (with accent)
+**File:** [dbt/models/v_callao_comunicacion_2026.sql](file:///c:/Users/User/Desktop/UCV/BUSSINES%20I%20BIG%20DATA/REPOSITORIO/Proyecto_ENLA_2026/dbt/models/v_callao_comunicacion_2026.sql) line 34, and all other dbt model SQL files  
+The `WHERE f.area = 'comunicacion'` filter will NEVER match because `area_academica` in BigQuery contains `'comunicación'` (with accent), `'matemática'`, etc. All 5 dbt views have this same problem.  
+**Fix:** Update the `WHERE` clause in all 5 dbt SQL files to use the accented names.
+
+---
+
+### Bug 7 — [ingest_enla.py](file:///c:/Users/User/Desktop/UCV/BUSSINES%20I%20BIG%20DATA/REPOSITORIO/Proyecto_ENLA_2026/src/ingestion/ingest_enla.py) [filter_data](file:///c:/Users/User/Desktop/UCV/BUSSINES%20I%20BIG%20DATA/REPOSITORIO/Proyecto_ENLA_2026/src/ingestion/ingest_enla.py#164-207) uses `grado_evaluacion == 2` but MINEDU Excel stores grade as a string or different integer
+**File:** [src/ingestion/ingest_enla.py](file:///c:/Users/User/Desktop/UCV/BUSSINES%20I%20BIG%20DATA/REPOSITORIO/Proyecto_ENLA_2026/src/ingestion/ingest_enla.py) line 193  
+`df[df['grado_evaluacion'] == grado]` where `grado=2` (int). If the Excel has `grado_evaluacion` as a string `'2'` or `'Segundo'`, the filter will return zero rows and ingestion succeeds silently with 0 rows.  
+**Fix:** Normalize `grado_evaluacion` to int via `pd.to_numeric(..., errors='coerce')` before filtering.
+
+---
+
+## Proposed Changes
+
+### Ingestion Layer
+
+#### [MODIFY] [ingest_enla.py](file:///c:/Users/User/Desktop/UCV/BUSSINES%20I%20BIG%20DATA/REPOSITORIO/Proyecto_ENLA_2026/src/ingestion/ingest_enla.py)
+- Remove `encoding` parameter from `pd.read_excel()` calls (Bug 1)
+- Add column name normalization (`.str.lower()`) right after reading the Excel (Bug 2)
+- Update `CORE_COLUMNS` and `UPSERT_KEY` to use lowercase (Bug 2)
+- Normalize `grado_evaluacion` to numeric before filtering (Bug 7)
+
+#### [MODIFY] [validators.py](file:///c:/Users/User/Desktop/UCV/BUSSINES%20I%20BIG%20DATA/REPOSITORIO/Proyecto_ENLA_2026/src/ingestion/validators.py)
+- Update `CORE_COLUMNS` to use lowercase (Bug 2)
+
+#### [MODIFY] [config.py](file:///c:/Users/User/Desktop/UCV/BUSSINES%20I%20BIG%20DATA/REPOSITORIO/Proyecto_ENLA_2026/src/ingestion/config.py)
+- Fix `env_file` path from `'.env'` to `'config/.env'` (Bug 4)
+
+---
+
+### ETL Layer
+
+#### [MODIFY] [transform.py](file:///c:/Users/User/Desktop/UCV/BUSSINES%20I%20BIG%20DATA/REPOSITORIO/Proyecto_ENLA_2026/src/etl/transform.py)
+- Remove duplicate dead code in [_create_dim_meta](file:///c:/Users/User/Desktop/UCV/BUSSINES%20I%20BIG%20DATA/REPOSITORIO/Proyecto_ENLA_2026/src/etl/transform.py#601-626) (Bug 5)
+
+---
+
+### dbt Layer
+
+#### [MODIFY] [v_callao_comunicacion_2026.sql](file:///c:/Users/User/Desktop/UCV/BUSSINES%20I%20BIG%20DATA/REPOSITORIO/Proyecto_ENLA_2026/dbt/models/v_callao_comunicacion_2026.sql)
+- Change `WHERE f.area = 'comunicacion'` → `WHERE f.area = 'comunicación'` (Bug 6)
+
+#### [MODIFY] [v_callao_matematica_2026.sql](file:///c:/Users/User/Desktop/UCV/BUSSINES%20I%20BIG%20DATA/REPOSITORIO/Proyecto_ENLA_2026/dbt/models/v_callao_matematica_2026.sql)
+- Change `WHERE f.area = 'matematica'` → `WHERE f.area = 'matemática'` (Bug 6)
+
+#### [MODIFY] [v_callao_ccss_2026.sql](file:///c:/Users/User/Desktop/UCV/BUSSINES%20I%20BIG%20DATA/REPOSITORIO/Proyecto_ENLA_2026/dbt/models/v_callao_ccss_2026.sql)
+- Verify/fix CCSS area filter (Bug 6)
+
+#### [MODIFY] [v_callao_cyt_2026.sql](file:///c:/Users/User/Desktop/UCV/BUSSINES%20I%20BIG%20DATA/REPOSITORIO/Proyecto_ENLA_2026/dbt/models/v_callao_cyt_2026.sql)
+- Verify/fix CyT area filter (Bug 6)
+
+#### [MODIFY] [v_callao_resumen_todas_areas.sql](file:///c:/Users/User/Desktop/UCV/BUSSINES%20I%20BIG%20DATA/REPOSITORIO/Proyecto_ENLA_2026/dbt/models/v_callao_resumen_todas_areas.sql)
+- Verify/fix all area filters (Bug 6)
+
+---
+
+## Verification Plan
+
+### Automated Tests (existing suite)
+
+```bash
+# From the project root
+cd "c:\Users\User\Desktop\UCV\BUSSINES I BIG DATA\REPOSITORIO\Proyecto_ENLA_2026"
+
+# Install deps first if needed
+pip install -r requirements.txt
+
+# Run only the unit tests (no external connections needed)
+pytest tests/unit/ -v
+
+# Run with coverage report
+pytest tests/unit/ -v --cov=src --cov-report=term-missing
+```
+
+The existing [tests/unit/test_transform.py](file:///c:/Users/User/Desktop/UCV/BUSSINES%20I%20BIG%20DATA/REPOSITORIO/Proyecto_ENLA_2026/tests/unit/test_transform.py) already covers the ETL transformation logic with mock data. After our fixes, all 30+ tests in that file should pass.
+
+### New Diagnostic Script
+
+I will create `tests/test_ingestion_local.py` — a standalone script that:
+1. Creates a minimal synthetic DataFrame mimicking the MINEDU Excel format
+2. Runs through [read_excel](file:///c:/Users/User/Desktop/UCV/BUSSINES%20I%20BIG%20DATA/REPOSITORIO/Proyecto_ENLA_2026/src/ingestion/ingest_enla.py#117-163) → [filter_data](file:///c:/Users/User/Desktop/UCV/BUSSINES%20I%20BIG%20DATA/REPOSITORIO/Proyecto_ENLA_2026/src/ingestion/ingest_enla.py#164-207) → [validate](file:///c:/Users/User/Desktop/UCV/BUSSINES%20I%20BIG%20DATA/REPOSITORIO/Proyecto_ENLA_2026/src/ingestion/ingest_enla.py#208-223) → [deduplicate](file:///c:/Users/User/Desktop/UCV/BUSSINES%20I%20BIG%20DATA/REPOSITORIO/Proyecto_ENLA_2026/src/ingestion/ingest_enla.py#224-242) WITHOUT connecting to MongoDB
+3. Prints pass/fail for each step
+
+Run with:
+```bash
+python tests/test_ingestion_local.py
+```
+
+> [!NOTE]
+> The full end-to-end integration test (MongoDB + BigQuery) requires real credentials and is run via GitHub Actions.

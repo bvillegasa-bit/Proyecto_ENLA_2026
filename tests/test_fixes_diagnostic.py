@@ -48,14 +48,14 @@ def run_test(name: str, fn):
     """Run a test function and print pass/fail."""
     try:
         fn()
-        print(f"  ✅ PASS — {name}")
+        print(f"   PASS — {name}")
         return True
     except AssertionError as e:
-        print(f"  ❌ FAIL — {name}")
+        print(f"   FAIL — {name}")
         print(f"       AssertionError: {e}")
         return False
     except Exception as e:
-        print(f"  ❌ ERROR — {name}")
+        print(f"   ERROR — {name}")
         traceback.print_exc()
         return False
 
@@ -274,8 +274,8 @@ if __name__ == '__main__':
     print("=" * 60)
     print(f"Results: {passed} passed, {failed} failed out of {len(tests)} tests")
     if failed == 0:
-        print("🎉 ALL TESTS PASSED — All bug fixes verified!")
+        print(" ALL TESTS PASSED — All bug fixes verified!")
     else:
-        print("⚠️  Some tests failed — see details above.")
+        print("  Some tests failed — see details above.")
     print("=" * 60)
     sys.exit(0 if failed == 0 else 1)
