@@ -201,7 +201,7 @@ class ModelTrainer:
             training_query = self._build_training_query(area)
             logger.info(f"Executing training query | area={area}")
 
-            job = bq_manager.get_client().query(training_query)
+            job = bq_manager.query(training_query)
             job.result()  # Wait for training to complete
 
             duration = time.time() - start_time
@@ -313,7 +313,7 @@ class ModelTrainer:
             FROM ML.EVALUATE(MODEL `{model_name}`)
             """
 
-            eval_df = bq_manager.query(eval_query)
+            eval_df = bq_manager.query(eval_query).to_dataframe()
 
             if eval_df.empty:
                 raise ModelEvaluationError(f"No evaluation metrics returned for '{area}'")
@@ -403,7 +403,7 @@ class ModelTrainer:
             FROM ML.WEIGHTS(MODEL `{model_name}`)
             """
 
-            weights_df = bq_manager.query(weights_query)
+            weights_df = bq_manager.query(weights_query).to_dataframe()
 
             logger.info(f"Feature weights retrieved for '{area}' | features={len(weights_df)}")
 
@@ -444,7 +444,7 @@ class ModelTrainer:
             WHERE model_name = 'enla_model_{area}_{model_version}'
             """
 
-            result_df = bq_manager.query(check_query)
+            result_df = bq_manager.query(check_query).to_dataframe()
 
             exists = result_df.iloc[0]['model_count'] > 0
 
@@ -477,7 +477,7 @@ class ModelTrainer:
         try:
             bq_manager = self._get_bq_manager()
 
-            client = bq_manager.get_client()
+            client = bq_manager
             client.delete_model(model_name, not_found_ok=True)
 
             logger.info(f"Model deleted: {model_name}")
