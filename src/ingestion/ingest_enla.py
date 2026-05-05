@@ -11,6 +11,10 @@ from pymongo.errors import PyMongoError, DuplicateKeyError
 from src.logging.setup import get_logger
 from src.ingestion.validators import ENLAValidator, ValidationReport
 from src.ingestion.config import settings
+from src.ingestion.column_mapping import (
+    UNIFIED_SCHEMA, YEAR_RENAME_DICTS, detect_file_format,
+    EXTRA_2022_FIELDS
+)
 from src.database.mongo_client import get_mongo_client, MongoConnectionError
 
 logger = get_logger('ingestion')
@@ -55,15 +59,15 @@ class ENLAIngestor:
     7. Log audit trail
     """
     
-    # Core columns that should be present in ALL years (case-sensitive from Excel)
+    # Core columns that should be present in ALL years (standardized snake_case names)
     CORE_COLUMNS = {
-        'ID_IE', 'ID_SECCION', 'nom_ie', 'nom_dre',
-        'grado_evaluacion',
+        'id_ie', 'id_seccion', 'nom_ie', 'nom_dre',
+        'ano_evaluacion', 'grado_evaluacion',
         'cor_est', 'area',  # cor_est = student ID, area = geographic zone
     }
-    
-    # UPSERT_KEY uses ano_evaluacion (will be added from filename if not present)
-    UPSERT_KEY = ['ID_IE', 'ID_SECCION', 'ano_evaluacion']
+
+    # UPSERT_KEY uses standardized names
+    UPSERT_KEY = ['id_ie', 'id_seccion', 'ano_evaluacion']
     
     def __init__(
         self,
@@ -122,7 +126,72 @@ class ENLAIngestor:
             self.mongo_collection = None
             self.log_collection = None
             logger.info("MongoDB reference released (connection pooled for reuse)")
-    
+
+    def _detect_year(self, df: pd.DataFrame, file_path: str) -> Optional[int]:
+        """
+        Detect the year/format of the Excel file.
+        
+        Uses detect_file_format() from column_mapping module:
+        - Primary: Check distinctive columns (M500_EM_2S_2023_CT → 2023, M500_L → 2022)
+        - Secondary: Extract year from filename
+        
+        Args:
+            df: DataFrame with original column names (after stripping)
+            file_path: Path to the Excel file (for filename extraction)
+        
+        Returns:
+            Detected year as integer, or None if unknown
+        """
+        filename = Path(file_path).name if file_path else None
+        format_key, detected_year = detect_file_format(df, filename)
+        
+        if format_key == 'unknown':
+            logger.warning(f"Could not detect file format for {file_path}. "
+                          f"Columns: {list(df.columns)[:10]}...")
+            return None
+        
+        logger.info(f"Detected file format: {format_key} (year={detected_year})")
+        return detected_year
+
+    def _rename_columns(self, df: pd.DataFrame, year: int) -> pd.DataFrame:
+        """
+        Rename columns to standardized names and ensure all UNIFIED_SCHEMA columns exist.
+        
+        Args:
+            df: DataFrame with original column names
+            year: Detected year (2022, 2023, etc.)
+        
+        Returns:
+            DataFrame with standardized column names
+        """
+        year_str = str(year)
+        
+        if year_str in YEAR_RENAME_DICTS:
+            rename_dict = YEAR_RENAME_DICTS[year_str]
+            # Only rename columns that exist in the DataFrame
+            rename_dict_filtered = {k: v for k, v in rename_dict.items() if k in df.columns}
+            df = df.rename(columns=rename_dict_filtered)
+            logger.info(f"Applied {len(rename_dict_filtered)} column renames for year {year}")
+            
+            # Log unmapped columns
+            unmapped = [col for col in df.columns if col not in UNIFIED_SCHEMA and col not in EXTRA_2022_FIELDS]
+            if unmapped:
+                logger.info(f"Found {len(unmapped)} unmapped columns (will preserve): {unmapped[:5]}...")
+        
+        # Add missing UNIFIED_SCHEMA columns with None
+        missing_schema_cols = [col for col in UNIFIED_SCHEMA if col not in df.columns]
+        for col in missing_schema_cols:
+            df[col] = None
+        
+        if missing_schema_cols:
+            logger.info(f"Added {len(missing_schema_cols)} missing UNIFIED_SCHEMA columns with None")
+        
+        # Ensure all 33 UNIFIED_SCHEMA columns exist
+        final_cols = [col for col in UNIFIED_SCHEMA if col in df.columns]
+        logger.info(f"Standardization complete: {len(final_cols)} UNIFIED_SCHEMA columns present")
+        
+        return df
+
     def read_excel(self, file_path: str, year: Optional[int] = None) -> pd.DataFrame:
         """
         Read Excel file.
@@ -157,35 +226,35 @@ class ENLAIngestor:
         
         # NOTE: Preserve original column names (mixed case from Excel)
         df.columns = df.columns.str.strip()  # Only strip whitespace, preserve case
-        
-        # Normalize year column variations (handle Spanish ñ and case differences)
-        if 'Año' in df.columns and 'ano_evaluacion' not in df.columns:
-            df = df.rename(columns={'Año': 'ano_evaluacion'})
-            logger.info("Normalized 'Año' column to 'ano_evaluacion'")
-        
-        # Normalize core columns (handle case variations)
-        column_renames = {
-            'ID_seccion': 'ID_SECCION',
-            'ID_ie': 'ID_IE',
-            'nom_dre': 'nom_dre',  # already handled earlier
-            'grado_evaluacion': 'grado_evaluacion',  # already handled earlier
-        }
-        # Apply renames for columns that exist
-        renames = {k: v for k, v in column_renames.items() if k in df.columns and v not in df.columns}
-        if renames:
-            df = df.rename(columns=renames)
-            logger.info(f"Renamed columns: {renames}")
-        
-        # Add missing required columns with defaults
+
+        # =================================================================
+        # NEW: Column Standardization Pipeline
+        # =================================================================
+
+        # Step 1: Detect file format/year
+        detected_year = self._detect_year(df, file_path)
+
+        # Step 2: Rename columns to standardized names and add missing UNIFIED_SCHEMA columns
+        if detected_year:
+            df = self._rename_columns(df, detected_year)
+        else:
+            logger.warning(f"Could not detect year for {file_path}. "
+                          f"Columns will remain in original format.")
+
+        # =================================================================
+        # Backward Compatibility: Handle cases where detection failed
+        # =================================================================
+
+        # Add missing required columns with defaults (if not already handled by _rename_columns)
         if 'nom_ie' not in df.columns:
-            df['nom_ie'] = df.get('ID_IE', '').astype(str) + ' - Unknown'
+            df['nom_ie'] = df.get('ID_IE', df.get('id_ie', '')).astype(str) + ' - Unknown'
             logger.info("Added missing 'nom_ie' column with default values")
-        
+
         # Add grado_evaluacion if missing (all Excel files are 2do de secundaria)
         if 'grado_evaluacion' not in df.columns and 'Grado' not in df.columns:
             df['grado_evaluacion'] = 2
             logger.info("Added missing 'grado_evaluacion' column with default value 2 (all data is 2do)")
-        
+
         # Add year column from filename if not present in data
         if year and 'ano_evaluacion' not in df.columns:
             df['ano_evaluacion'] = year
@@ -194,7 +263,7 @@ class ENLAIngestor:
             logger.info(f"Using 'ano_evaluacion' from Excel data (years: {df['ano_evaluacion'].unique()})")
         else:
             logger.warning("No 'ano_evaluacion' column and no year provided - data will use default")
-        
+
         return df
     
     def filter_data(self, df: pd.DataFrame,
@@ -218,21 +287,15 @@ class ENLAIngestor:
         
         original_size = len(df)
         
-        # Normalize region column (handle case variations in column names)
-        region_col = None
+        # Filter by region (columns are now standardized to 'nom_dre')
         if 'nom_dre' in df.columns:
-            region_col = 'nom_dre'
-        elif 'nom_DRE' in df.columns:
-            region_col = 'nom_DRE'
-            df = df.rename(columns={'nom_DRE': 'nom_dre'})
-        
-        if region_col:
             df['nom_dre'] = df['nom_dre'].str.upper().str.strip()
             df = df[df['nom_dre'] == region.upper()]
+            logger.info(f"Filtered by region: {region}")
         else:
-            logger.warning(f"No region column found, skipping region filter")
+            logger.warning(f"No region column 'nom_dre' found, skipping region filter")
         
-        # Handle grade column variations
+        # Filter by grade (columns are now standardized to 'grado_evaluacion')
         if 'grado_evaluacion' in df.columns:
             # Normalize grade values (handle string representations like '2do')
             grade_map = {
@@ -241,24 +304,17 @@ class ENLAIngestor:
             }
             df['grado_evaluacion'] = df['grado_evaluacion'].map(lambda x: grade_map.get(str(x), x))
             df = df[df['grado_evaluacion'] == grado]
-        elif 'Grado' in df.columns:
-            df = df.rename(columns={'Grado': 'grado_evaluacion'})
-            # Normalize grade values
-            grade_map = {
-                '2do': 2, '3ro': 3, '4to': 4, '5to': 5,
-                '2': 2, '3': 3, '4': 4, '5': 5
-            }
-            df['grado_evaluacion'] = df['grado_evaluacion'].map(lambda x: grade_map.get(str(x), x))
-            df = df[df['grado_evaluacion'] == grado]
+            logger.info(f"Filtered by grade: {grado}")
         else:
-            logger.warning(f"No grade column found, skipping grade filter")
+            logger.warning(f"No grade column 'grado_evaluacion' found, skipping grade filter")
         
         # Filter by year - if specific year provided, filter to that year only
-        if year and 'ano_evaluacion' in df.columns:
-            df = df[df['ano_evaluacion'] == year]
-            logger.info(f"Filtered to specific year: {year}")
-        elif 'ano_evaluacion' in df.columns:
-            df = df[df['ano_evaluacion'].isin(settings.ENLA_YEARS)]
+        if 'ano_evaluacion' in df.columns:
+            if year:
+                df = df[df['ano_evaluacion'] == year]
+                logger.info(f"Filtered to specific year: {year}")
+            else:
+                df = df[df['ano_evaluacion'].isin(settings.ENLA_YEARS)]
         
         filtered_size = len(df)
         

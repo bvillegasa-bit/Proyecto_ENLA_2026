@@ -128,7 +128,11 @@ Los datos utilizados en este proyecto provienen de la **Plataforma de Resultados
    - Asigna el valor `null` o un valor por defecto según corresponda
    - Continúa con el procesamiento de las demás áreas (Comunicación, Matemática, CCSS)
 
-3. **Columnas esperadas**: El sistema valida que estén presentes las columnas requeridas: `id_ie`, `id_seccion`, `nom_ie`, `nom_dre`, `ano_evaluacion`, `grado_evaluacion`, `cor_est_comunicacion`, `cor_est_matematica`, `cor_est_ccss`, `cor_est_cyt`.
+3. **Estandarización de Columnas**: El sistema ahora utiliza **33 campos estandarizados en snake_case** para TODOS los años:
+   - **Ejemplo**: `M500_L` (2022) y `M500_EM_2S_2023_CT` (2023) → `medida_lectura`
+   - La estandarización ocurre automáticamente durante la ingesta (ver `src/ingestion/column_mapping.py`)
+   - **Columnas estandarizadas principales**: `ano_evaluacion`, `grado_evaluacion`, `id_ie`, `id_seccion`, `medida_lectura`, `medida_matematica`, `medida_ciencias`, etc.
+   - Ver documentación completa en `docs/schema.md`
 
 ## 📂 Dónde Colocar los Archivos a Analizar
 

@@ -26,14 +26,15 @@ class Settings(BaseSettings):
     ENLA_REGION: str = 'CALLAO'
     ENLA_GRADO: int = 2
     ENLA_YEARS: list = [2021, 2022, 2023]
-    # EMA 2023 column mappings (corrected schema)
+    # Standardized area columns (after column_mapping.py rename)
     # NOTE: "area" column = geographic zone (Rural/Urban), NOT academic area
+    # These are the standardized names from src/ingestion/column_mapping.py
     ENLA_AREA_COLUMNS: dict = {
-        'M500_EM_2S_2023_CT': 'Comunicación/Lectura',
-        'M500_EM_2S_2023_MA': 'Matemática',
-        'M500_EM_2S_2023_CS': 'Ciencias Sociales',
+        'medida_lectura': 'Comunicación/Lectura',
+        'medida_matematica': 'Matemática',
+        'medida_ciencias': 'Ciencias Naturales',
     }
-    # Student identifier column
+    # Student identifier column (standardized name)
     ENLA_STUDENT_ID_COL: str = 'cor_est'
     
     # Logging Configuration
