@@ -289,8 +289,8 @@ class ENLAIngestor:
         
         # Filter by region (columns are now standardized to 'nom_dre')
         if 'nom_dre' in df.columns:
-            df['nom_dre'] = df['nom_dre'].str.upper().str.strip()
-            df = df[df['nom_dre'] == region.upper()]
+            df.loc[:, 'nom_dre'] = df['nom_dre'].str.upper().str.strip()
+            df = df[df['nom_dre'] == region.upper()].copy()
             logger.info(f"Filtered by region: {region}")
         else:
             logger.warning(f"No region column 'nom_dre' found, skipping region filter")
@@ -302,8 +302,8 @@ class ENLAIngestor:
                 '2do': 2, '3ro': 3, '4to': 4, '5to': 5,
                 '2': 2, '3': 3, '4': 4, '5': 5
             }
-            df['grado_evaluacion'] = df['grado_evaluacion'].map(lambda x: grade_map.get(str(x), x))
-            df = df[df['grado_evaluacion'] == grado]
+            df.loc[:, 'grado_evaluacion'] = df['grado_evaluacion'].map(lambda x: grade_map.get(str(x), x))
+            df = df[df['grado_evaluacion'] == grado].copy()
             logger.info(f"Filtered by grade: {grado}")
         else:
             logger.warning(f"No grade column 'grado_evaluacion' found, skipping grade filter")
@@ -311,10 +311,10 @@ class ENLAIngestor:
         # Filter by year - if specific year provided, filter to that year only
         if 'ano_evaluacion' in df.columns:
             if year:
-                df = df[df['ano_evaluacion'] == year]
+                df = df[df['ano_evaluacion'] == year].copy()
                 logger.info(f"Filtered to specific year: {year}")
             else:
-                df = df[df['ano_evaluacion'].isin(settings.ENLA_YEARS)]
+                df = df[df['ano_evaluacion'].isin(settings.ENLA_YEARS)].copy()
         
         filtered_size = len(df)
         
@@ -504,6 +504,19 @@ class ENLAIngestor:
             # Step 4: Deduplicate
             df = self.deduplicate(df)
             
+            # Remove rows with NaN in UPSERT key columns (invalid for DB)
+            df = df.dropna(subset=self.UPSERT_KEY)
+            
+            # Replace NaN with None for MongoDB compatibility
+            df = df.where(pd.notnull(df), None)
+            
+            if len(df) == 0:
+                msg = "No data remaining after deduplication and key cleanup"
+                logger.warning(msg)
+                summary['errors'].append(msg)
+                summary['status'] = 'no_data'
+                return summary
+            
             # Step 5: Connect to MongoDB and UPSERT
             self._connect()
             upsert_counts = self.upsert_to_mongodb(df)
@@ -515,8 +528,9 @@ class ENLAIngestor:
             for error in upsert_counts['errors'][:10]:  # Log first 10 errors
                 summary['errors'].append(error)
             
-            summary['status'] = 'success'
-            logger.info(f"Ingestion completed successfully | ingestion_id={self.ingestion_id} status='success' year={year}")
+            # Set status based on actual inserted rows
+            summary['status'] = 'success' if summary['rows_inserted'] > 0 else 'failed'
+            logger.info(f"Ingestion completed | ingestion_id={self.ingestion_id} status='{summary['status']}' year={year}")
             
         except Exception as e:
             summary['status'] = 'failed'
