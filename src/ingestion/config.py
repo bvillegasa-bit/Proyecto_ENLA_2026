@@ -8,7 +8,7 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 class Settings(BaseSettings):
     """Application settings from environment variables."""
     
-    model_config = SettingsConfigDict(env_file='.env', case_sensitive=True)
+    model_config = SettingsConfigDict(env_file='config/.env', case_sensitive=True)
     
     # MongoDB Configuration
     MONGODB_URI: str = os.getenv('MONGODB_URI', '')

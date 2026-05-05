@@ -43,15 +43,15 @@ def sample_raw_df_2023() -> pd.DataFrame:
         'cor_est': ['EST001', 'EST002', 'EST003'],
         'area': ['Urban', 'Urban', 'Rural'],
         # 2023 columns: M500_EM_2S_2023_XX format
-        'M500_EM_2S_2023_CT': [72.5, 65.0, 80.0],   # Comunicación
-        'grupo_EM_2S_2023_CT': ['2', '3', '1'],
-        'peso_CT': [1.0, 1.0, 1.0],
-        'M500_EM_2S_2023_MA': [58.3, 71.2, None],    # Matemática
-        'grupo_EM_2S_2023_MA': ['3', '2', None],
-        'peso_MA': [1.0, 1.0, None],
-        'M500_EM_2S_2023_CS': [None, 69.5, 75.0],    # Ciencias Sociales
-        'grupo_EM_2S_2023_CS': [None, '2', '2'],
-        'peso_CS': [None, 1.0, 1.0],
+        'medida_lectura': [72.5, 65.0, 80.0],   # Comunicación
+        'grupo_lectura': ['2', '3', '1'],
+        'peso_lectura': [1.0, 1.0, 1.0],
+        'medida_matematica': [58.3, 71.2, None],    # Matemática
+        'grupo_matematica': ['3', '2', None],
+        'peso_matematica': [1.0, 1.0, None],
+        'medida_ciencias': [None, 69.5, 75.0],    # Ciencias Sociales
+        'grupo_ciencias': [None, '2', '2'],
+        'peso_ciencias': [None, 1.0, 1.0],
     })
 
 
@@ -69,15 +69,15 @@ def sample_raw_df_2022() -> pd.DataFrame:
         'cor_est': ['EST001', 'EST002', 'EST003'],
         'area': ['Urban', 'Urban', 'Rural'],
         # 2022 columns: medida500_X format (different from 2023!)
-        'medida500_L': [72.5, 65.0, 80.0],   # Comunicación (Lectura)
-        'grupo_L': ['2', '3', '1'],
-        'pes_o_L': [1.0, 1.0, 1.0],
-        'medida500_M': [58.3, 71.2, None],    # Matemática
-        'grupo_M': ['3', '2', None],
-        'pes_o_M': [1.0, 1.0, None],
-        'medida500_CN': [None, 69.5, 75.0],    # Ciencias (CN)
-        'grupo_CN': [None, '2', '2'],
-        'pes_o_CN': [None, 1.0, 1.0],
+        'medida_lectura': [72.5, 65.0, 80.0],   # Comunicación (Lectura)
+        'grupo_lectura': ['2', '3', '1'],
+        'peso_lectura': [1.0, 1.0, 1.0],
+        'medida_matematica': [58.3, 71.2, None],    # Matemática
+        'grupo_matematica': ['3', '2', None],
+        'peso_matematica': [1.0, 1.0, None],
+        'medida_ciencias': [None, 69.5, 75.0],    # Ciencias (CN)
+        'grupo_ciencias': [None, '2', '2'],
+        'peso_ciencias': [None, 1.0, 1.0],
     })
 
 
@@ -95,15 +95,15 @@ def sample_raw_with_all_nulls() -> pd.DataFrame:
         'cor_est': ['EST001'],
         'area': ['Urban'],
         # All score columns are NULL
-        'M500_EM_2S_2023_CT': [None],
-        'grupo_EM_2S_2023_CT': [None],
-        'peso_CT': [None],
-        'M500_EM_2S_2023_MA': [None],
-        'grupo_EM_2S_2023_MA': [None],
-        'peso_MA': [None],
-        'M500_EM_2S_2023_CS': [None],
-        'grupo_EM_2S_2023_CS': [None],
-        'peso_CS': [None],
+        'medida_lectura': [None],
+        'grupo_lectura': [None],
+        'peso_lectura': [None],
+        'medida_matematica': [None],
+        'grupo_matematica': [None],
+        'peso_matematica': [None],
+        'medida_ciencias': [None],
+        'grupo_ciencias': [None],
+        'peso_ciencias': [None],
     })
 
 
@@ -168,7 +168,7 @@ class TestPivotByArea2023:
         """Verify that scores are mapped to the correct academic area."""
         result = mock_etl_transform._transform_to_long_format(sample_raw_df_2023, year=2023)
         
-        # Check comunicación score for EST001 (from M500_EM_2S_2023_CT = 72.5)
+        # Check comunicación score for EST001 (from medida_lectura = 72.5)
         # User said: "comunicación y matemática" (WITH accents!)
         est001_com = result[
             (result['cor_est'] == 'EST001') & (result['area_academica'] == 'comunicación')
@@ -176,7 +176,7 @@ class TestPivotByArea2023:
         assert len(est001_com) == 1
         assert est001_com.iloc[0]['score'] == 72.5
         
-        # Check matemática score for EST001 (from M500_EM_2S_2023_MA = 58.3)
+        # Check matemática score for EST001 (from medida_matematica = 58.3)
         # User said: "comunicación y matemática" (WITH accents!)
         est001_mat = result[
             (result['cor_est'] == 'EST001') & (result['area_academica'] == 'matemática')
@@ -248,16 +248,16 @@ class TestPivotByArea2022:
     
     def test_pivot_2022_finds_correct_columns(self, mock_etl_transform: ETLTransform,
                                                sample_raw_df_2022: pd.DataFrame):
-        """Verify that 2022 columns (medida500_L, grupo_L, etc.) are discovered."""
+        """Verify that 2022 columns (medida_lectura, grupo_lectura, etc.) are discovered."""
         result = mock_etl_transform._transform_to_long_format(sample_raw_df_2022, year=2022)
         
-        # Check that comunicación scores come from medida500_L
+        # Check that comunicación scores come from medida_lectura
         # User said: "comunicación y matemática" (WITH accents!)
         est001_com = result[
             (result['cor_est'] == 'EST001') & (result['area_academica'] == 'comunicación')
         ]
         assert len(est001_com) == 1
-        assert est001_com.iloc[0]['score'] == 72.5  # From medida500_L
+        assert est001_com.iloc[0]['score'] == 72.5  # From medida_lectura
     
     def test_pivot_2022_contains_all_areas(self, mock_etl_transform: ETLTransform,
                                               sample_raw_df_2022: pd.DataFrame):
@@ -628,18 +628,18 @@ class TestDynamicColumnDiscovery:
     def test_discover_2023_columns(self, mock_etl_transform: ETLTransform):
         """Verify that 2023 columns (M500_EM_2S_2023_XX) are discovered."""
         df = pd.DataFrame({
-            'M500_EM_2S_2023_CT': [1, 2, 3],
-            'grupo_EM_2S_2023_CT': ['A', 'B', 'C'],
-            'peso_CT': [1.0, 1.0, 1.0],
+            'medida_lectura': [1, 2, 3],
+            'grupo_lectura': ['A', 'B', 'C'],
+            'peso_lectura': [1.0, 1.0, 1.0],
             # Also add MA to test multiple areas
-            'M500_EM_2S_2023_MA': [4, 5, 6],
-            'grupo_EM_2S_2023_MA': ['D', 'E', 'F'],
-            'peso_MA': [1.0, 1.0, 1.0],
+            'medida_matematica': [4, 5, 6],
+            'grupo_matematica': ['D', 'E', 'F'],
+            'peso_matematica': [1.0, 1.0, 1.0],
         })
         
         # Add required columns
-        df['ID_IE'] = ['IE001', 'IE002', 'IE003']
-        df['ID_SECCION'] = ['SEC001', 'SEC002', 'SEC003']
+        df['id_ie'] = ['IE001', 'IE002', 'IE003']
+        df['id_seccion'] = ['SEC001', 'SEC002', 'SEC003']
         df['cor_est'] = ['EST001', 'EST002', 'EST003']
         df['area'] = ['Urban', 'Urban', 'Rural']
         df['ano_evaluacion'] = [2023, 2023, 2023]
@@ -653,17 +653,17 @@ class TestDynamicColumnDiscovery:
     def test_discover_2022_columns(self, mock_etl_transform: ETLTransform):
         """Verify that 2022 columns (medida500_X) are discovered."""
         df = pd.DataFrame({
-            'medida500_L': [1, 2, 3],   # comunicación
-            'grupo_L': ['A', 'B', 'C'],
-            'pes_o_L': [1.0, 1.0, 1.0],
-            'medida500_M': [4, 5, 6],   # matemática (REQUIRED - must be present!)
-            'grupo_M': ['D', 'E', 'F'],
-            'pes_o_M': [1.0, 1.0, 1.0],
+            'medida_lectura': [1, 2, 3],   # comunicación
+            'grupo_lectura': ['A', 'B', 'C'],
+            'peso_lectura': [1.0, 1.0, 1.0],
+            'medida_matematica': [4, 5, 6],   # matemática (REQUIRED - must be present!)
+            'grupo_matematica': ['D', 'E', 'F'],
+            'peso_matematica': [1.0, 1.0, 1.0],
         })
         
         # Add required columns
-        df['ID_IE'] = ['IE001', 'IE002', 'IE003']
-        df['ID_SECCION'] = ['SEC001', 'SEC002', 'SEC003']
+        df['id_ie'] = ['IE001', 'IE002', 'IE003']
+        df['id_seccion'] = ['SEC001', 'SEC002', 'SEC003']
         df['cor_est'] = ['EST001', 'EST002', 'EST003']
         df['area'] = ['Urban', 'Urban', 'Rural']
         df['ano_evaluacion'] = [2022, 2022, 2022]
@@ -677,18 +677,18 @@ class TestDynamicColumnDiscovery:
     def test_optional_area_not_present(self, mock_etl_transform: ETLTransform):
         """Verify that optional areas (ccss, cyt) are skipped if not present."""
         df = pd.DataFrame({
-            'M500_EM_2S_2023_CT': [1, 2, 3],
-            'grupo_EM_2S_2023_CT': ['A', 'B', 'C'],
-            'peso_CT': [1.0, 1.0, 1.0],
-            'M500_EM_2S_2023_MA': [4, 5, 6],
-            'grupo_EM_2S_2023_MA': ['D', 'E', 'F'],
-            'peso_MA': [1.0, 1.0, 1.0],
+            'medida_lectura': [1, 2, 3],
+            'grupo_lectura': ['A', 'B', 'C'],
+            'peso_lectura': [1.0, 1.0, 1.0],
+            'medida_matematica': [4, 5, 6],
+            'grupo_matematica': ['D', 'E', 'F'],
+            'peso_matematica': [1.0, 1.0, 1.0],
             # No CS columns - ccss should be skipped
         })
         
         # Add required columns
-        df['ID_IE'] = ['IE001', 'IE002', 'IE003']
-        df['ID_SECCION'] = ['SEC001', 'SEC002', 'SEC003']
+        df['id_ie'] = ['IE001', 'IE002', 'IE003']
+        df['id_seccion'] = ['SEC001', 'SEC002', 'SEC003']
         df['cor_est'] = ['EST001', 'EST002', 'EST003']
         df['area'] = ['Urban', 'Urban', 'Rural']
         df['ano_evaluacion'] = [2023, 2023, 2023]
@@ -703,14 +703,14 @@ class TestDynamicColumnDiscovery:
         """Verify that missing REQUIRED areas log a warning (but don't fail if some areas found)."""
         df = pd.DataFrame({
             # Only ccss (optional) - missing required areas
-            'M500_EM_2S_2023_CS': [1, 2, 3],
-            'grupo_EM_2S_2023_CS': ['A', 'B', 'C'],
-            'peso_CS': [1.0, 1.0, 1.0],
+            'medida_ciencias': [1, 2, 3],
+            'grupo_ciencias': ['A', 'B', 'C'],
+            'peso_ciencias': [1.0, 1.0, 1.0],
         })
         
         # Add required columns
-        df['ID_IE'] = ['IE001', 'IE002', 'IE003']
-        df['ID_SECCION'] = ['SEC001', 'SEC002', 'SEC003']
+        df['id_ie'] = ['IE001', 'IE002', 'IE003']
+        df['id_seccion'] = ['SEC001', 'SEC002', 'SEC003']
         df['cor_est'] = ['EST001', 'EST002', 'EST003']
         df['area'] = ['Urban', 'Urban', 'Rural']
         df['ano_evaluacion'] = [2023, 2023, 2023]

@@ -484,7 +484,7 @@ class ENLAIngestor:
                 msg = "No data found after filtering"
                 logger.warning(msg)
                 summary['errors'].append(msg)
-                summary['status'] = 'success'  # Not an error, just empty result
+                summary['status'] = 'no_data'  # No data after filtering
                 return summary
             
             # Step 3: Validate (with flexible column checking)

@@ -496,7 +496,7 @@ class ETLTransform:
                 })
                 
                 all_records.append(area_df)
-                logger.info(f"Processed '{area_name}': {len(area_df)} records (null: {scores.isna().sum()})")
+                logger.info(f"Processed '{area_key}': {len(area_df)} records (null: {scores.isna().sum()})")
                 
             except KeyError as e:
                 if STANDARDIZED_AREAS[area_key]['required']:
