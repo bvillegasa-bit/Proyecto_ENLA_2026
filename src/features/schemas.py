@@ -13,6 +13,8 @@ from typing import List, Dict
 # enla_callao_features schema
 # Engineered features for ML model training
 # NOTE: "area_academica" = academic area (comunicación/matemática/ccss), NOT geographic zone
+# For year-specific areas (comunicación, matemática), each row has a specific year
+# For general areas (ccss, cyt), year is NULL (all years combined)
 # ==========================================
 FEATURES_SCHEMA: List[SchemaField] = [
     SchemaField("feature_id", "STRING", mode="REQUIRED",
@@ -23,6 +25,8 @@ FEATURES_SCHEMA: List[SchemaField] = [
                 description="Institution ID (id_ie)"),
     SchemaField("nom_ie", "STRING", mode="NULLABLE",
                 description="Institution name"),
+    SchemaField("year", "INTEGER", mode="NULLABLE",
+                description="Year for per-year prediction (2022, 2023). NULL for general areas."),
 
     # Normalized features [-1, 1]
     SchemaField("avg_score_2023", "FLOAT64", mode="NULLABLE",
@@ -38,7 +42,7 @@ FEATURES_SCHEMA: List[SchemaField] = [
 
     # Target
     SchemaField("target", "INTEGER", mode="NULLABLE",
-                description="Binary target: 1 if avg_score_2023 > meta_threshold, else 0"),
+                description="Binary target: 1 if raw_avg_score > meta_threshold, else 0"),
 
     # Raw values (for reference/debugging)
     SchemaField("raw_avg_score_2023", "FLOAT64", mode="NULLABLE",

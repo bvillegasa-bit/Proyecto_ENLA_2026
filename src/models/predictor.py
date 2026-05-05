@@ -21,6 +21,15 @@ from src.ingestion.config import settings
 
 logger = get_logger('model_predictor')
 
+# Areas that use per-year prediction (2022, 2023)
+YEAR_SPECIFIC_AREAS = ['comunicación', 'matemática']
+
+# Areas that use general prediction (all years combined)
+GENERAL_AREAS = ['ccss', 'cyt']
+
+# Years for per-year prediction
+PREDICTION_YEARS = [2022, 2023]
+
 
 # ==========================================
 # Custom Exceptions
@@ -99,21 +108,43 @@ class ENLAPredictor:
             self.bq_manager = get_bq_manager(project_id=self.project_id)
         return self.bq_manager
 
-    def _get_model_name(self, area: str) -> str:
-        """Get fully qualified model name."""
+    def _get_model_name(self, area: str, year: Optional[int] = None) -> str:
+        """Get fully qualified model name.
+
+        For year-specific areas with a year, model name includes year:
+        - enla_model_comunicación_v1_2022
+
+        For general areas or no year specified:
+        - enla_model_ccss_v1
+        """
+        if year is not None and area in YEAR_SPECIFIC_AREAS:
+            return f"{self.project_id}.{self.dataset_id}.enla_model_{area}_{self.model_version}_{year}"
         return f"{self.project_id}.{self.dataset_id}.enla_model_{area}_{self.model_version}"
 
-    def _build_prediction_query(self, area: str) -> str:
+    def _build_prediction_query(self, area: str, year: Optional[int] = None) -> str:
         """
         Build ML.PREDICT() SQL query for an area.
 
+        For year-specific areas (comunicación, matemática):
+        - If year is specified, filters by that year
+        - If year is None, uses all years (should not happen for year-specific)
+
+        For general areas (ccss, cyt):
+        - No year filter, uses all years combined
+
         Args:
             area: Subject area (comunicación, matemática, ccss, cyt)
+            year: Optional year for per-year prediction (2022, 2023)
 
         Returns:
             SQL string for ML.PREDICT() statement
         """
-        model_name = self._get_model_name(area)
+        model_name = self._get_model_name(area, year)
+
+        # Build WHERE clause
+        where_clause = f"WHERE area = '{area}'"
+        if year is not None and area in YEAR_SPECIFIC_AREAS:
+            where_clause += f" AND year = {year}"
 
         query = f"""
         SELECT
@@ -123,20 +154,28 @@ class ENLAPredictor:
             (
                 SELECT *
                 FROM `{self.project_id}.{self.dataset_id}.enla_callao_features`
-                WHERE area = '{area}'
+                {where_clause}
             )
         )
         """
 
-        logger.info(f"Prediction query built | area={area} model_name={model_name}")
+        logger.info(f"Prediction query built | area={area} year={year} model_name={model_name}")
         return query
 
-    def predict_for_area(self, area: str) -> pd.DataFrame:
+    def predict_for_area(self, area: str, year: Optional[int] = None) -> pd.DataFrame:
         """
         Generate predictions for one area.
 
+        For year-specific areas (comunicación, matemática):
+        - If year is specified, predicts for that specific year
+        - If year is None, predicts for all years in PREDICTION_YEARS and combines
+
+        For general areas (ccss, cyt):
+        - Ignores year parameter, predicts once for all years combined
+
         Args:
             area: Subject area (comunicación, matemática, ccss, cyt)
+            year: Optional year for per-year prediction (2022, 2023)
 
         Returns:
             DataFrame with predictions including predicted_success, confidence
@@ -144,17 +183,25 @@ class ENLAPredictor:
         Raises:
             PredictionError: If prediction fails
         """
-        logger.info(f"Generating predictions for area: {area}")
+        logger.info(f"Generating predictions for area: {area} year: {year}")
+
+        # For general areas, ignore year parameter
+        if area in GENERAL_AREAS:
+            year = None
+
+        # If year is None and area is year-specific, predict all years
+        if year is None and area in YEAR_SPECIFIC_AREAS:
+            return self._predict_all_years_for_area(area)
 
         try:
             bq_manager = self._get_bq_manager()
             bq_manager.connect()
 
-            prediction_query = self._build_prediction_query(area)
+            prediction_query = self._build_prediction_query(area, year)
             predictions_df = bq_manager.query(prediction_query)
 
             if predictions_df.empty:
-                logger.warning(f"No predictions generated for area '{area}'")
+                logger.warning(f"No predictions generated for area '{area}' year={year}")
                 return pd.DataFrame()
 
             # Add risk classification
@@ -166,24 +213,60 @@ class ENLAPredictor:
             if 'area' not in predictions_df.columns:
                 predictions_df['area'] = area
 
+            # Add year column if not present (for year-specific predictions)
+            if 'year' not in predictions_df.columns and year is not None:
+                predictions_df['year'] = year
+
             # Rename probability column for consistency
             prob_col = 'predicted_target_probability'
             if prob_col in predictions_df.columns:
                 predictions_df['confidence'] = predictions_df[prob_col].astype(float)
 
-            logger.info(f"Predictions generated for '{area}' | count={len(predictions_df)}")
+            logger.info(f"Predictions generated for '{area}' year={year} | count={len(predictions_df)}")
 
             return predictions_df
 
         except BigQueryConnectionError as e:
-            error_msg = f"BigQuery error predicting for '{area}': {str(e)}"
+            error_msg = f"BigQuery error predicting for '{area}' year={year}: {str(e)}"
             logger.error(error_msg)
             raise PredictionError(error_msg)
 
         except Exception as e:
-            error_msg = f"Unexpected error predicting for '{area}': {str(e)}"
+            error_msg = f"Unexpected error predicting for '{area}' year={year}: {str(e)}"
             logger.error(error_msg, exc_info=True)
             raise PredictionError(error_msg)
+
+    def _predict_all_years_for_area(self, area: str) -> pd.DataFrame:
+        """
+        Generate predictions for all years in PREDICTION_YEARS for year-specific areas.
+
+        Args:
+            area: Subject area (comunicación, matemática)
+
+        Returns:
+            Combined DataFrame with predictions for all years
+        """
+        logger.info(f"Generating predictions for all years | area={area} years={PREDICTION_YEARS}")
+
+        all_predictions = []
+
+        for year in PREDICTION_YEARS:
+            try:
+                year_predictions = self.predict_for_area(area, year)
+                if not year_predictions.empty:
+                    all_predictions.append(year_predictions)
+            except PredictionError as e:
+                logger.error(f"Prediction failed for area '{area}' year={year}: {str(e)}")
+                continue
+
+        if not all_predictions:
+            logger.warning(f"No predictions generated for any year for area '{area}'")
+            return pd.DataFrame()
+
+        combined_df = pd.concat(all_predictions, ignore_index=True)
+        logger.info(f"Combined predictions for '{area}' | total_count={len(combined_df)}")
+
+        return combined_df
 
     def classify_risk(self, confidence: float) -> str:
         """
@@ -204,7 +287,10 @@ class ENLAPredictor:
 
     def predict_all_areas(self) -> Dict[str, pd.DataFrame]:
         """
-        Generate predictions for all 4 areas.
+        Generate predictions for all areas.
+
+        For general areas (ccss, cyt): predicts once for all years combined
+        For year-specific areas (comunicación, matemática): predicts per year (2022, 2023)
 
         Returns:
             Dict mapping area name to DataFrame with predictions
@@ -213,10 +299,18 @@ class ENLAPredictor:
         errors = []
 
         logger.info("Starting predictions for all areas")
+        logger.info(f"Year-specific areas (per-year): {YEAR_SPECIFIC_AREAS}")
+        logger.info(f"General areas (all years): {GENERAL_AREAS}")
 
         for area in AREAS:
             try:
-                predictions_df = self.predict_for_area(area)
+                if area in GENERAL_AREAS:
+                    # Predict once for all years combined
+                    predictions_df = self.predict_for_area(area, year=None)
+                else:
+                    # Predict per-year (2022, 2023)
+                    predictions_df = self.predict_for_area(area, year=None)  # Will call _predict_all_years_for_area
+
                 results[area] = predictions_df
                 logger.info(f"Area '{area}' predictions: {len(predictions_df)} records")
             except PredictionError as e:
@@ -446,7 +540,10 @@ class ENLAPredictor:
             missing_models = []
             for area in AREAS:
                 if not trainer.check_model_exists(area, self.model_version):
-                    missing_models.append(area)
+                    if area in YEAR_SPECIFIC_AREAS:
+                        missing_models.append(f"{area} (years: {PREDICTION_YEARS})")
+                    else:
+                        missing_models.append(area)
 
             if missing_models:
                 raise PredictionError(

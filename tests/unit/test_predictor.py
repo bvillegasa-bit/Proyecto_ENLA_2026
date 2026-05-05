@@ -104,34 +104,60 @@ class TestBuildPredictionQuery:
     """Tests for SQL prediction query construction."""
 
     def test_build_prediction_query_comunicacion(self, predictor: ENLAPredictor):
-        """Verify SQL structure for comunicacion area."""
-        query = predictor._build_prediction_query('comunicacion')
+        """Verify SQL structure for comunicación area (general, no year)."""
+        # User said: "comunicación y matemática" (WITH accents!)
+        query = predictor._build_prediction_query('comunicación')
 
         assert 'ML.PREDICT' in query
-        assert 'enla_model_comunicacion_v1' in query
+        assert 'enla_model_comunicación_v1' in query
         assert 'enla_callao_features' in query
-        assert "WHERE area = 'comunicacion'" in query
+        assert "WHERE area = 'comunicación'" in query
+        # For general query, should NOT have year filter
+        assert 'AND year' not in query
+
+    def test_build_prediction_query_comunicacion_year_specific(self, predictor: ENLAPredictor):
+        """Verify SQL structure for comunicación area with year filter."""
+        # User said: "comunicación y matemática" (WITH accents!)
+        query = predictor._build_prediction_query('comunicación', year=2022)
+
+        assert 'enla_model_comunicación_v1_2022' in query
+        assert "WHERE area = 'comunicación'" in query
+        assert 'AND year = 2022' in query
 
     def test_build_prediction_query_matematica(self, predictor: ENLAPredictor):
-        """Verify SQL structure for matematica area."""
-        query = predictor._build_prediction_query('matematica')
+        """Verify SQL structure for matemática area (general, no year)."""
+        # User said: "comunicación y matemática" (WITH accents!)
+        query = predictor._build_prediction_query('matemática')
 
-        assert 'enla_model_matematica_v1' in query
-        assert "WHERE area = 'matematica'" in query
+        assert 'enla_model_matemática_v1' in query
+        assert "WHERE area = 'matemática'" in query
+
+    def test_build_prediction_query_matematica_year_specific(self, predictor: ENLAPredictor):
+        """Verify SQL structure for matemática area with year filter."""
+        # User said: "comunicación y matemática" (WITH accents!)
+        query = predictor._build_prediction_query('matemática', year=2023)
+
+        assert 'enla_model_matemática_v1_2023' in query
+        assert "WHERE area = 'matemática'" in query
+        assert 'AND year = 2023' in query
 
     def test_build_prediction_query_ccss(self, predictor: ENLAPredictor):
-        """Verify SQL structure for ccss area."""
+        """Verify SQL structure for ccss area (general, all years)."""
         query = predictor._build_prediction_query('ccss')
 
         assert 'enla_model_ccss_v1' in query
         assert "WHERE area = 'ccss'" in query
+        # ccss is general area, should NOT have year filter
+        assert 'AND year' not in query
 
     def test_build_prediction_query_cyt(self, predictor: ENLAPredictor):
-        """Verify SQL structure for cyt area."""
+        """Verify SQL structure for cyt area (general, all years)."""
         query = predictor._build_prediction_query('cyt')
 
         assert 'enla_model_cyt_v1' in query
         assert "WHERE area = 'cyt'" in query
+        # cyt is general area, should NOT have year filter
+        assert 'AND year' not in query
 
     def test_build_prediction_query_uses_correct_project(self, predictor: ENLAPredictor):
         """Verify fully qualified names use correct project/dataset."""
@@ -187,10 +213,11 @@ class TestPredictForArea:
 # ==========================================
 
 class TestPredictAllAreas:
-    """Tests for predicting across all 4 areas."""
+    """Tests for predicting across all areas."""
 
     def test_predict_all_areas(self, predictor: ENLAPredictor):
-        """Verify predictions for all areas."""
+        """Verify predictions for all areas with per-year logic."""
+        # Mock returns 1 row per query (simulating 1 institution)
         mock_df = pd.DataFrame({
             'predicted_target': [1],
             'predicted_target_probability': [0.80],
@@ -205,7 +232,13 @@ class TestPredictAllAreas:
         # User said: "comunicación y matemática" (WITH accents!)
         for area in ['comunicación', 'matemática', 'ccss']:
             assert area in results
-            assert len(results[area]) == 1
+            assert len(results[area]) > 0  # Should have some data
+
+        # Year-specific areas should have 2 rows (2022 + 2023 for 1 institution)
+        assert len(results['comunicación']) == 2
+        assert len(results['matemática']) == 2
+        # General areas should have 1 row
+        assert len(results['ccss']) == 1
 
     def test_predict_all_areas_partial_failure(self, predictor: ENLAPredictor):
         """Verify partial failure is handled."""

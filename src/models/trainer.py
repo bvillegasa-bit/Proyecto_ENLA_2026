@@ -84,14 +84,24 @@ class ModelTrainingPipelineResult:
 class ModelTrainer:
     """Trains BigQuery ML Logistic Regression models for ENLA prediction.
 
-    Trains 4 independent models, one per area:
-    - comunicación, matemática, ccss, cyt
+    Trains models per area with different strategies:
+    - comunicación, matemática: Per-year prediction (2022, 2023) - trains separate models per year
+    - ccss, cyt: General prediction (all years combined) - trains one model per area
 
-    Uses temporal train/test split (2021-2022 train, 2023 test).
+    Uses temporal train/test split (2021-2022 train, 2023 test for general areas).
     """
 
-    AREAS = AREAS  # ['comunicación', 'matemática', 'ccss', 'cyt']
+    AREAS = AREAS  # ['comunicación', 'matemática', 'ccss']
     FEATURE_COLUMNS = FEATURE_COLS  # ['avg_score_2023', 'avg_score_2022', 'avg_score_2021', 'trend', 'variance']
+
+    # Areas that use per-year prediction (2022, 2023)
+    YEAR_SPECIFIC_AREAS = ['comunicación', 'matemática']
+
+    # Areas that use general prediction (all years combined)
+    GENERAL_AREAS = ['ccss', 'cyt']
+
+    # Years for per-year prediction
+    PREDICTION_YEARS = [2022, 2023]
 
     def __init__(self, bigquery_client: Optional[BigQueryClientManager] = None,
                  project_id: Optional[str] = None,
@@ -115,7 +125,7 @@ class ModelTrainer:
         self.dataset_id = dataset_id or settings.GCP_DATASET_ID
         self.l2_reg = l2_reg
         self.max_iterations = max_iterations
-        self.ls_init_learn_rate = ls_init_learn_rate
+        self.ls_init_learn_rate = ls_init_learn_rate  # Learning rate parameter name in BigQuery ML
 
         logger.info(f"ModelTrainer initialized | project_id={self.project_id} dataset_id={self.dataset_id} areas={self.AREAS} l2_reg={self.l2_reg} max_iterations={self.max_iterations} ls_init_learn_rate={self.ls_init_learn_rate}")
 
@@ -126,21 +136,34 @@ class ModelTrainer:
             self.bq_manager = get_bq_manager(project_id=self.project_id)
         return self.bq_manager
 
-    def _build_training_query(self, area: str) -> str:
+    def _build_training_query(self, area: str, year: Optional[int] = None) -> str:
         """
         Build the SQL query for training the model for a given area.
 
-        Uses temporal split: 2021-2022 as train, 2023 as eval.
+        For year-specific areas (comunicación, matemática):
+        - Trains per year (2022, 2023) with year filter
+        - Uses data from that specific year only
+
+        For general areas (ccss, cyt):
+        - Trains on all years combined
+        - No year filter applied
 
         Args:
             area: Subject area (comunicación, matemática, ccss, cyt)
+            year: Optional year for per-year prediction (2022, 2023)
+                   If None, trains on all years (general prediction)
 
         Returns:
             SQL string for CREATE MODEL statement
         """
-        model_name = f"{self.project_id}.{self.dataset_id}.enla_model_{area}_v1"
+        model_name = self._get_model_name(area, 'v1', year)
 
         feature_cols = ", ".join(self.FEATURE_COLUMNS)
+
+        # Build WHERE clause
+        where_clause = f"WHERE area = '{area}'"
+        if year is not None:
+            where_clause += f" AND year = {year}"
 
         query = f"""
         CREATE OR REPLACE MODEL `{model_name}`
@@ -151,7 +174,7 @@ class ModelTrainer:
             data_split_col='split',
             l2_reg={self.l2_reg},
             max_iterations={self.max_iterations},
-             ls_init_learn_rate={self.ls_init_learn_rate},
+            ls_init_learn_rate={self.ls_init_learn_rate},
             early_stop=True
         ) AS
         SELECT
@@ -162,31 +185,58 @@ class ModelTrainer:
                 ELSE 'eval'
             END AS split
         FROM `{self.project_id}.{self.dataset_id}.enla_callao_features`
-        WHERE area = '{area}'
+        {where_clause}
         """
 
-        logger.info(f"Training query built | area={area} model_name={model_name}")
+        logger.info(f"Training query built | area={area} year={year} model_name={model_name}")
         return query
 
-    def _get_model_name(self, area: str, model_version: str = 'v1') -> str:
-        """Get fully qualified model name."""
+    def _get_model_name(self, area: str, model_version: str = 'v1', year: Optional[int] = None) -> str:
+        """Get fully qualified model name.
+
+        For year-specific areas with a year, model name includes year:
+        - enla_model_comunicación_v1_2022
+
+        For general areas or no year specified:
+        - enla_model_ccss_v1
+        """
+        if year is not None and area in self.YEAR_SPECIFIC_AREAS:
+            return f"{self.project_id}.{self.dataset_id}.enla_model_{area}_{model_version}_{year}"
         return f"{self.project_id}.{self.dataset_id}.enla_model_{area}_{model_version}"
 
-    def train_model_for_area(self, area: str) -> TrainingResult:
+    def train_model_for_area(self, area: str, year: Optional[int] = None) -> TrainingResult:
         """
         Train a single model for one area.
 
+        For year-specific areas (comunicación, matemática):
+        - If year is specified, trains model for that specific year
+        - If year is None, trains models for all years in PREDICTION_YEARS
+
+        For general areas (ccss, cyt):
+        - Ignores year parameter, trains one model for all years combined
+
         Args:
             area: Subject area (comunicación, matemática, ccss, cyt)
+            year: Optional year for per-year prediction (2022, 2023)
+                   If None and area is year-specific, trains all years.
 
         Returns:
             TrainingResult with training status and stats
         """
         result = TrainingResult(area=area, status="running")
-        model_name = self._get_model_name(area)
+
+        # For general areas, ignore year parameter
+        if area in self.GENERAL_AREAS:
+            year = None
+
+        # If year is None and area is year-specific, train all years
+        if year is None and area in self.YEAR_SPECIFIC_AREAS:
+            return self._train_all_years_for_area(area)
+
+        model_name = self._get_model_name(area, 'v1', year)
         result.model_name = model_name
 
-        logger.info(f"Starting model training for area: {area}")
+        logger.info(f"Starting model training for area: {area} year: {year}")
         start_time = time.time()
 
         try:
@@ -198,8 +248,8 @@ class ModelTrainer:
             bq_manager = self._get_bq_manager()
 
             # Build and execute training query
-            training_query = self._build_training_query(area)
-            logger.info(f"Executing training query | area={area}")
+            training_query = self._build_training_query(area, year)
+            logger.info(f"Executing training query | area={area} year={year}")
 
             job = bq_manager.query(training_query)
             job.result()  # Wait for training to complete
@@ -218,31 +268,68 @@ class ModelTrainer:
             result.status = "success"
             result.training_stats = training_stats
 
-            logger.info(f"Model training completed for area '{area}' | duration={duration} job_id={job.job_id}")
+            logger.info(f"Model training completed for area '{area}' year={year} | duration={duration} job_id={job.job_id}")
 
         except BigQueryConnectionError as e:
-            error_msg = f"BigQuery connection error training model for '{area}': {str(e)}"
+            error_msg = f"BigQuery connection error training model for '{area}' year={year}: {str(e)}"
             result.errors.append(error_msg)
             result.status = "failed"
             logger.error(error_msg, exc_info=True)
 
         except ModelTrainingError as e:
-            error_msg = f"Training error for '{area}': {str(e)}"
+            error_msg = f"Training error for '{area}' year={year}: {str(e)}"
             result.errors.append(error_msg)
             result.status = "failed"
             logger.error(error_msg)
 
         except Exception as e:
-            error_msg = f"Unexpected error training model for '{area}': {str(e)}"
+            error_msg = f"Unexpected error training model for '{area}' year={year}: {str(e)}"
             result.errors.append(error_msg)
             result.status = "failed"
             logger.error(error_msg, exc_info=True)
 
         return result
 
+    def _train_all_years_for_area(self, area: str) -> TrainingResult:
+        """
+        Train separate models for each year in PREDICTION_YEARS.
+
+        Used for year-specific areas (comunicación, matemática).
+
+        Args:
+            area: Subject area (comunicación, matemática)
+
+        Returns:
+            TrainingResult with combined status (success if all years succeed)
+        """
+        result = TrainingResult(area=area, status="running")
+        results = {}
+
+        logger.info(f"Training models for all years | area={area} years={self.PREDICTION_YEARS}")
+
+        for year in self.PREDICTION_YEARS:
+            year_result = self.train_model_for_area(area, year)
+            results[year] = year_result
+
+        # Aggregate results
+        all_success = all(r.is_success for r in results.values())
+        errors = [f"Year {year}: {r.errors}" for year, r in results.items() if not r.is_success]
+
+        result.status = "success" if all_success else "failed"
+        result.errors = errors
+        result.training_stats = {
+            'years_trained': list(results.keys()),
+            'per_year_results': {str(y): r.training_stats for y, r in results.items()},
+        }
+
+        return result
+
     def train_all_models(self) -> ModelTrainingPipelineResult:
         """
-        Train all 4 models, one per area.
+        Train all models for all areas.
+
+        For general areas (ccss, cyt): trains one model per area
+        For year-specific areas (comunicación, matemática): trains per-year models (2022, 2023)
 
         Returns:
             ModelTrainingPipelineResult with per-area results
@@ -253,23 +340,43 @@ class ModelTrainer:
         logger.info("=" * 60)
         logger.info("Starting Model Training Pipeline")
         logger.info(f"Areas: {self.AREAS}")
+        logger.info(f"Year-specific areas (per-year): {self.YEAR_SPECIFIC_AREAS}")
+        logger.info(f"General areas (all years): {self.GENERAL_AREAS}")
         logger.info("=" * 60)
 
         for area in self.AREAS:
             try:
-                training_result = self.train_model_for_area(area)
-                pipeline_result.results[area] = training_result
+                if area in self.GENERAL_AREAS:
+                    # Train one model for all years combined
+                    training_result = self.train_model_for_area(area, year=None)
+                    result_key = area
+                else:
+                    # Train per-year models
+                    training_result = self._train_all_years_for_area(area)
+                    result_key = area
+
+                pipeline_result.results[result_key] = training_result
 
                 if training_result.is_success:
-                    pipeline_result.models_trained += 1
+                    if area in self.YEAR_SPECIFIC_AREAS:
+                        # Count each year as a trained model
+                        pipeline_result.models_trained += len(self.PREDICTION_YEARS)
+                    else:
+                        pipeline_result.models_trained += 1
                 else:
-                    pipeline_result.models_failed += 1
+                    if area in self.YEAR_SPECIFIC_AREAS:
+                        pipeline_result.models_failed += len(self.PREDICTION_YEARS)
+                    else:
+                        pipeline_result.models_failed += 1
                     pipeline_result.errors.extend(training_result.errors)
 
             except Exception as e:
                 error_msg = f"Unexpected error training model for '{area}': {str(e)}"
                 pipeline_result.errors.append(error_msg)
-                pipeline_result.models_failed += 1
+                if area in self.YEAR_SPECIFIC_AREAS:
+                    pipeline_result.models_failed += len(self.PREDICTION_YEARS)
+                else:
+                    pipeline_result.models_failed += 1
                 pipeline_result.results[area] = TrainingResult(
                     area=area, status="failed", errors=[error_msg]
                 )
@@ -419,44 +526,63 @@ class ModelTrainer:
             logger.error(error_msg, exc_info=True)
             raise ModelTrainingError(error_msg)
 
-    def check_model_exists(self, area: str, model_version: str = 'v1') -> bool:
+    def check_model_exists(self, area: str, model_version: str = 'v1', year: Optional[int] = None) -> bool:
         """
         Check if a model exists in BigQuery.
+
+        For year-specific areas, checks if model for specific year exists.
+        If year is None and area is year-specific, checks all years.
 
         Args:
             area: Subject area
             model_version: Model version string
+            year: Optional year for per-year models (2022, 2023)
 
         Returns:
             True if model exists, False otherwise
         """
-        model_name = self._get_model_name(area, model_version)
+        # For general areas, ignore year parameter
+        if area in self.GENERAL_AREAS:
+            year = None
+
+        # If year is None and area is year-specific, check all years
+        if year is None and area in self.YEAR_SPECIFIC_AREAS:
+            return all(self.check_model_exists(area, model_version, y) for y in self.PREDICTION_YEARS)
+
+        model_name = self._get_model_name(area, model_version, year)
 
         logger.info(f"Checking if model exists: {model_name}")
 
         try:
             bq_manager = self._get_bq_manager()
 
+            # Extract model name for INFORMATION_SCHEMA query
+            # Model name format: enla_model_{area}_{version}_{year} or enla_model_{area}_{version}
+            if year is not None:
+                bq_model_name = f"enla_model_{area}_{model_version}_{year}"
+            else:
+                bq_model_name = f"enla_model_{area}_{model_version}"
+
             # Use INFORMATION_SCHEMA to check model existence
             check_query = f"""
             SELECT COUNT(*) as model_count
             FROM `{self.project_id}.{self.dataset_id}.INFORMATION_SCHEMA.MODELS`
-            WHERE schema_name = '{self.dataset_id}' AND model_name = 'enla_model_{area}_{model_version}'
+            WHERE schema_name = '{self.dataset_id}' AND model_name = '{bq_model_name}'
             """
 
             result_df = bq_manager.query(check_query).to_dataframe()
 
             exists = result_df.iloc[0]['model_count'] > 0
 
-            logger.info(f"Model existence check for '{area}': {exists}")
+            logger.info(f"Model existence check for '{area}' year={year}: {exists}")
             return exists
 
         except BigQueryConnectionError as e:
-            logger.error(f"Error checking model existence for '{area}': {str(e)}")
+            logger.error(f"Error checking model existence for '{area}' year={year}: {str(e)}")
             return False
 
         except Exception as e:
-            logger.error(f"Unexpected error checking model for '{area}': {str(e)}")
+            logger.error(f"Unexpected error checking model for '{area}' year={year}: {str(e)}")
             return False
 
     def delete_model(self, area: str, model_version: str = 'v1') -> bool:

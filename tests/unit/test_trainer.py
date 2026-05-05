@@ -60,7 +60,7 @@ def trainer(mock_bq_manager) -> ModelTrainer:
     trainer.dataset_id = 'BI_ENLA'
     trainer.l2_reg = 0.1
     trainer.max_iterations = 20
-    trainer.learn_rate = 0.1
+    trainer.ls_init_learn_rate = 0.1  # Match constructor parameter name
     return trainer
 
 
@@ -71,8 +71,8 @@ def trainer(mock_bq_manager) -> ModelTrainer:
 class TestBuildTrainingQuery:
     """Tests for SQL training query construction."""
 
-    def test_build_training_query_comunicacion(self, trainer: ModelTrainer):
-        """Verify SQL structure for comunicación area."""
+    def test_build_training_query_comunicacion_general(self, trainer: ModelTrainer):
+        """Verify SQL structure for comunicación area (general, no year)."""
         # User said: "comunicación y matemática" (WITH accents!)
         query = trainer._build_training_query('comunicación')
 
@@ -84,31 +84,46 @@ class TestBuildTrainingQuery:
         assert "data_split_col='split'" in query
         assert "l2_reg=0.1" in query
         assert "max_iterations=20" in query
-        assert "learn_rate=0.1" in query
+        assert "ls_init_learn_rate=0.1" in query
         assert "early_stop=True" in query
         assert "WHERE area = 'comunicación'" in query
+        # General query should NOT have year filter
+        assert 'AND year' not in query
 
-    def test_build_training_query_matematica(self, trainer: ModelTrainer):
-        """Verify SQL structure for matemática area."""
+    def test_build_training_query_comunicacion_year_specific(self, trainer: ModelTrainer):
+        """Verify SQL structure for comunicación area with year filter (2022)."""
+        query = trainer._build_training_query('comunicación', year=2022)
+
+        assert 'enla_model_comunicación_v1_2022' in query
+        assert "WHERE area = 'comunicación'" in query
+        assert 'AND year = 2022' in query
+
+    def test_build_training_query_matematica_year_specific(self, trainer: ModelTrainer):
+        """Verify SQL structure for matemática area with year filter (2023)."""
         # User said: "comunicación y matemática" (WITH accents!)
-        query = trainer._build_training_query('matemática')
+        query = trainer._build_training_query('matemática', year=2023)
 
-        assert 'enla_model_matemática_v1' in query
+        assert 'enla_model_matemática_v1_2023' in query
         assert "WHERE area = 'matemática'" in query
+        assert 'AND year = 2023' in query
 
-    def test_build_training_query_ccss(self, trainer: ModelTrainer):
-        """Verify SQL structure for ccss area."""
+    def test_build_training_query_ccss_general(self, trainer: ModelTrainer):
+        """Verify SQL structure for ccss area (general, all years)."""
         query = trainer._build_training_query('ccss')
 
         assert 'enla_model_ccss_v1' in query
         assert "WHERE area = 'ccss'" in query
+        # ccss is general area, should NOT have year filter
+        assert 'AND year' not in query
 
-    def test_build_training_query_cyt(self, trainer: ModelTrainer):
-        """Verify SQL structure for cyt area."""
+    def test_build_training_query_cyt_general(self, trainer: ModelTrainer):
+        """Verify SQL structure for cyt area (general, all years)."""
         query = trainer._build_training_query('cyt')
 
         assert 'enla_model_cyt_v1' in query
         assert "WHERE area = 'cyt'" in query
+        # cyt is general area, should NOT have year filter
+        assert 'AND year' not in query
 
     def test_build_training_query_includes_features(self, trainer: ModelTrainer):
         """Verify all feature columns are included in the query."""
@@ -168,10 +183,11 @@ class TestModelNameConvention:
 class TestTrainModelForArea:
     """Tests for single area model training."""
 
-    def test_train_model_success(self, trainer: ModelTrainer, mock_query_job):
-        """Verify successful training returns correct result."""
+    def test_train_model_success(self, trainer: ModelTrainer):
+        """Verify successful training returns correct result for year-specific area."""
         # User said: "comunicación y matemática" (WITH accents!)
-        result = trainer.train_model_for_area('comunicación')
+        # Train for a specific year (2022)
+        result = trainer.train_model_for_area('comunicación', year=2022)
 
         # User said: "comunicación y matemática" (WITH accents!)
         assert result.area == 'comunicación'
@@ -179,7 +195,18 @@ class TestTrainModelForArea:
         assert result.is_success == True
         assert len(result.errors) == 0
         assert 'comunicación' in result.model_name
+        assert '2022' in result.model_name  # Year-specific model
         assert 'job_id' in result.training_stats
+
+    def test_train_model_all_years(self, trainer: ModelTrainer):
+        """Verify training all years for year-specific area."""
+        result = trainer.train_model_for_area('comunicación')  # No year = train all years
+
+        assert result.area == 'comunicación'
+        assert result.status == 'success'
+        assert result.is_success == True
+        assert 'years_trained' in result.training_stats
+        assert result.training_stats['years_trained'] == [2022, 2023]
 
     def test_train_model_invalid_area(self, trainer: ModelTrainer):
         """Verify invalid area raises ModelTrainingError."""
@@ -206,19 +233,25 @@ class TestTrainModelForArea:
 # ==========================================
 
 class TestTrainAllModels:
-    """Tests for training all 4 models."""
+    """Tests for training all models.
+
+    Year-specific areas (comunicación, matemática): 2 models each (2022, 2023) = 4 models
+    General areas (ccss): 1 model = 1 model
+    Total: 5 models for 3 areas
+    """
 
     def test_train_all_models_success(self, trainer: ModelTrainer, mock_query_job):
-        """Verify all models train successfully."""
+        """Verify all models train successfully (5 models total)."""
         trainer.bq_manager.query.return_value = mock_query_job
 
         result = trainer.train_all_models()
 
         assert result.status == 'success'
-        assert result.models_trained == 3
+        # 2 year-specific areas * 2 years + 1 general area = 5 models
+        assert result.models_trained == 5
         assert result.models_failed == 0
         assert result.is_success == True
-        assert len(result.results) == 3
+        assert len(result.results) == 3  # 3 areas
 
     def test_train_all_models_partial_failure(self, trainer: ModelTrainer, mock_query_job):
         """Verify partial failure is handled correctly."""
@@ -235,7 +268,8 @@ class TestTrainAllModels:
         result = trainer.train_all_models()
 
         assert result.status == 'partial'
-        assert result.models_trained == 2
+        # comunición (2) + matemática (2) = 4 trained, ccss (1) failed
+        assert result.models_trained == 4
         assert result.models_failed == 1
         assert result.is_success == False
 

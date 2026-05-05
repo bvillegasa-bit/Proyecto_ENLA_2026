@@ -70,6 +70,15 @@ AREAS = ['comunicación', 'matemática', 'ccss']  # Removed 'cyt' - no data avai
 FEATURE_COLS = ['avg_score_2023', 'avg_score_2022', 'avg_score_2021', 'trend', 'variance']
 YEARS = [2021, 2022, 2023]
 
+# Areas that use per-year prediction (2022, 2023)
+YEAR_SPECIFIC_AREAS = ['comunicación', 'matemática']
+
+# Areas that use general prediction (all years combined)
+GENERAL_AREAS = ['ccss', 'cyt']
+
+# Years for per-year prediction
+PREDICTION_YEARS = [2022, 2023]
+
 
 # ==========================================
 # FeatureEngineer Class
@@ -366,28 +375,37 @@ class FeatureEngineer:
     # ==========================================
 
     def engineer_features_for_area(self, area: str,
-                                   meta_overrides: Optional[Dict[str, float]] = None) -> pd.DataFrame:
+                                    meta_overrides: Optional[Dict[str, float]] = None) -> pd.DataFrame:
         """
         Full feature engineering pipeline for one area.
+
+        For year-specific areas (comunicación, matemática):
+        - Creates separate rows for each year (2022, 2023)
+        - Each row has features for that specific year
+
+        For general areas (ccss, cyt):
+        - Creates one row per institution with all years combined
+        - Uses standard feature engineering
 
         Steps:
         1. Query fact_enla from BigQuery
         2. Calculate yearly averages
-        3. Calculate trend and variance
-        4. Compute normalization parameters
-        5. Normalize features
-        6. Generate target labels
+        3. For year-specific: create per-year rows
+        4. Calculate trend and variance
+        5. Compute normalization parameters
+        6. Normalize features
+        7. Generate target labels
 
         Args:
             area: Subject area (comunicación, matemática, ccss, cyt)
             meta_overrides: Optional dict of {institution_id: threshold} to override default threshold
 
         Returns:
-            DataFrame with all features for the area
+            DataFrame with all features for the area (may have multiple rows per institution for year-specific areas)
         """
         logger.info(f"Starting feature engineering for area: {area}")
 
-        # Step 1: Query data
+        # Step1: Query data
         bq_manager = self._get_bq_manager()
 
         # Debug: Check what's in fact_enla before querying
@@ -424,7 +442,7 @@ class FeatureEngineer:
             return pd.DataFrame(columns=['id_ie', 'nom_ie', 'avg_2021', 'avg_2022', 'avg_2023', 'trend', 'variance',
                                          'raw_avg_score_2023', 'raw_avg_score_2022', 'raw_avg_score_2021',
                                          'raw_trend', 'raw_variance', 'avg_score_2023', 'avg_score_2022',
-                                         'avg_score_2021', 'area', 'target', 'feature_id', 'created_at', 'institution_id', 'meta_threshold'])
+                                         'avg_score_2021', 'area', 'target', 'feature_id', 'created_at', 'institution_id', 'meta_threshold', 'year'])
 
         # Step 2: Calculate yearly averages
         avg_df = self.calculate_yearly_averages(raw_df, area)
@@ -442,15 +460,142 @@ class FeatureEngineer:
             return pd.DataFrame(columns=['id_ie', 'nom_ie', 'avg_2021', 'avg_2022', 'avg_2023', 'trend', 'variance',
                                          'raw_avg_score_2023', 'raw_avg_score_2022', 'raw_avg_score_2021',
                                          'raw_trend', 'raw_variance', 'avg_score_2023', 'avg_score_2022',
-                                         'avg_score_2021', 'area', 'target', 'feature_id', 'created_at', 'institution_id', 'meta_threshold'])
+                                         'avg_score_2021', 'area', 'target', 'feature_id', 'created_at', 'institution_id', 'meta_threshold', 'year'])
 
-        # Step 3: Calculate trend
+        # Step 3: Handle year-specific vs general areas
+        if area in YEAR_SPECIFIC_AREAS:
+            # Create per-year rows for 2022 and 2023
+            return self._engineer_features_per_year(avg_df, area, meta_overrides)
+        else:
+            # Standard feature engineering for general areas
+            return self._engineer_features_general(avg_df, area, meta_overrides)
+
+    def _engineer_features_per_year(self, avg_df: pd.DataFrame, area: str,
+                                     meta_overrides: Optional[Dict[str, float]] = None) -> pd.DataFrame:
+        """
+        Feature engineering for year-specific areas (comunicación, matemática).
+
+        Creates separate rows for each year (2022, 2023).
+        Each row contains features for predicting that specific year.
+
+        Args:
+            avg_df: DataFrame with yearly averages
+            area: Subject area
+            meta_overrides: Optional threshold overrides
+
+        Returns:
+            DataFrame with per-year feature rows
+        """
+        logger.info(f"Engineering per-year features for area '{area}'")
+
+        all_rows = []
+
+        for year in PREDICTION_YEARS:
+            year_df = avg_df.copy()
+
+            # For each year, we need to create features that would be available at prediction time
+            # For predicting year Y, we use data from years < Y
+            if year == 2022:
+                # To predict 2022, use 2021 data
+                year_df['avg_score'] = year_df['avg_2021']
+                year_df['raw_avg_score'] = year_df['avg_2021']
+                # Trend: not applicable for first prediction year, set to 0
+                year_df['trend'] = 0.0
+                year_df['raw_trend'] = 0.0
+                # Variance: not applicable for single year, set to 0
+                year_df['variance'] = 0.0
+                year_df['raw_variance'] = 0.0
+            elif year == 2023:
+                # To predict 2023, use 2021-2022 data
+                year_df['avg_score'] = year_df['avg_2023']
+                year_df['raw_avg_score'] = year_df['avg_2023']
+                # Trend: 2023 vs 2022
+                year_df['trend'] = np.where(
+                    year_df['avg_2022'].isna() | year_df['avg_2023'].isna(),
+                    np.nan,
+                    np.where(
+                        year_df['avg_2022'] == 0,
+                        0.0,
+                        (year_df['avg_2023'] - year_df['avg_2022']) / year_df['avg_2022']
+                    )
+                )
+                year_df['raw_trend'] = year_df['trend']
+                # Variance: std dev of 2021, 2022, 2023
+                score_cols = ['avg_2021', 'avg_2022', 'avg_2023']
+                year_df['variance'] = year_df[score_cols].std(axis=1, ddof=0)
+                year_df['raw_variance'] = year_df['variance']
+
+            # Add year column
+            year_df['year'] = year
+
+            # Prepare raw columns
+            year_df['raw_avg_score_2023'] = year_df['avg_2023']
+            year_df['raw_avg_score_2022'] = year_df['avg_2022']
+            year_df['raw_avg_score_2021'] = year_df['avg_2021']
+
+            # Normalize features
+            # For simplicity, normalize avg_score to [-1, 1]
+            raw_feature_cols = ['avg_2021', 'avg_2022', 'avg_2023']
+            norm_params = self.compute_normalization_params(year_df, raw_feature_cols)
+            year_df = self.normalize_features(year_df, norm_params)
+
+            # Rename to final column names
+            year_df = year_df.rename(columns={
+                'avg_2023': 'avg_score_2023',
+                'avg_2022': 'avg_score_2022',
+                'avg_2021': 'avg_score_2021',
+            })
+
+            # Generate target based on that year's score
+            meta_threshold = self.target_threshold
+            if meta_overrides:
+                # Apply per-institution overrides if available
+                year_df['target'] = year_df.apply(
+                    lambda row: 1 if row['raw_avg_score'] > meta_overrides.get(row['institution_id'], meta_threshold) else 0,
+                    axis=1
+                ).astype('float64')
+            else:
+                year_df['target'] = np.where(
+                    year_df['raw_avg_score'].isna(),
+                    np.nan,
+                    np.where(year_df['raw_avg_score'] > meta_threshold, 1, 0)
+                ).astype('float64')
+
+            # Add area column
+            year_df['area_academica'] = area
+
+            all_rows.append(year_df)
+
+        # Combine all years
+        result_df = pd.concat(all_rows, ignore_index=True)
+        logger.info(f"Per-year feature engineering complete for area '{area}' | total_rows={len(result_df)}")
+
+        return result_df
+
+    def _engineer_features_general(self, avg_df: pd.DataFrame, area: str,
+                                     meta_overrides: Optional[Dict[str, float]] = None) -> pd.DataFrame:
+        """
+        Standard feature engineering for general areas (ccss, cyt).
+
+        One row per institution with all years combined.
+
+        Args:
+            avg_df: DataFrame with yearly averages
+            area: Subject area
+            meta_overrides: Optional threshold overrides
+
+        Returns:
+            DataFrame with features
+        """
+        logger.info(f"Engineering general features for area '{area}'")
+
+        # Calculate trend
         avg_df = self.calculate_trend(avg_df)
 
-        # Step 4: Calculate variance
+        # Calculate variance
         avg_df = self.calculate_variance(avg_df)
 
-        # Step 5: Prepare raw columns for output (copy before normalization)
+        # Prepare raw columns for output (copy before normalization)
         raw_cols = {
             'raw_avg_score_2023': 'avg_2023',
             'raw_avg_score_2022': 'avg_2022',
@@ -464,15 +609,14 @@ class FeatureEngineer:
             else:
                 avg_df[raw_col] = np.nan
 
-        # Step 6: Compute normalization parameters
-        # NOTE: Use pre-rename column names (avg_2023, not avg_score_2023) because rename happens in Step 7
+        # Compute normalization parameters
         raw_feature_cols = ['avg_2023', 'avg_2022', 'avg_2021', 'trend', 'variance']
         norm_params = self.compute_normalization_params(avg_df, raw_feature_cols)
 
         # Store for later BigQuery insert
         self._norm_params_store[area] = norm_params
 
-        # Step 7: Normalize features
+        # Normalize features
         avg_df = self.normalize_features(avg_df, norm_params)
 
         # Rename normalized columns to final names
@@ -483,35 +627,44 @@ class FeatureEngineer:
         }
         avg_df = avg_df.rename(columns=col_rename)
 
-        # Step 8: Generate target labels
+        # Generate target labels
         meta_threshold = self.target_threshold
         avg_df = self.generate_target(avg_df, meta_threshold)
 
         # Add area_academica column (academic area, NOT geographic zone)
         avg_df['area_academica'] = area
 
-        logger.info(f"Feature engineering complete for area '{area}' | institutions={len(avg_df)}")
+        # year is NULL for general areas
+        avg_df['year'] = np.nan
+
+        logger.info(f"General feature engineering complete for area '{area}' | institutions={len(avg_df)}")
 
         return avg_df
 
     def engineer_all_areas(self, meta_overrides: Optional[Dict[str, float]] = None) -> Dict[str, pd.DataFrame]:
         """
         Run feature engineering for all available areas.
-        
+
+        For year-specific areas (comunicación, matemática):
+        - Creates per-year rows (2022, 2023)
+
+        For general areas (ccss, cyt):
+        - Creates one row per institution
+
         Uses DYNAMIC area discovery from fact_enla table to handle
         any accent variations (e.g., 'comunicación' vs 'comunicacion').
-        
+
         Args:
             meta_overrides: Optional dict of {institution_id: threshold} overrides
-            
+
         Returns:
             Dict mapping area name to DataFrame with features
         """
         results = {}
         errors = []
-        
+
         logger.info("Starting feature engineering for all areas")
-        
+
         # DYNAMIC AREA DISCOVERY: Query areas from database
         # This avoids hardcoding and handles accent variations
         try:
@@ -524,33 +677,33 @@ class FeatureEngineer:
             available_areas_df = bq_manager.query(check_query)
             available_areas = available_areas_df['area_academica'].tolist() if not available_areas_df.empty else []
             logger.info(f"Areas found in fact_enla: {available_areas}")
-            
+
             # Use areas from database (dynamic discovery)
             areas_to_process = available_areas
-            
+
             if not areas_to_process:
                 logger.warning("No areas found in fact_enla! Falling back to AREAS constant.")
                 areas_to_process = AREAS
-            
+
         except Exception as e:
             logger.warning(f"Could not query areas from database: {e}. Using AREAS constant.")
             areas_to_process = AREAS
-        
+
         logger.info(f"Processing areas: {areas_to_process}")
-        
+
         for area in areas_to_process:
             try:
                 df = self.engineer_features_for_area(area, meta_overrides)
                 results[area] = df
-                logger.info(f"Area '{area}' processed: {len(df)} institutions")
+                logger.info(f"Area '{area}' processed: {len(df)} rows")
             except Exception as e:
                 error_msg = f"Error processing area '{area}': {str(e)}"
                 errors.append(error_msg)
                 logger.error(error_msg, exc_info=True)
                 results[area] = pd.DataFrame()
-        
+
         logger.info(f"All areas processed | areas_with_data={sum(1 for df in results.values() if not df.empty)} errors={len(errors)}")
-        
+
         return results
 
     # ==========================================
