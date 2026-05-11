@@ -111,7 +111,7 @@ class TestBuildPredictionQuery:
         assert 'ML.PREDICT' in query
         assert 'enla_model_comunicación_v1' in query
         assert 'enla_callao_features' in query
-        assert "WHERE area = 'comunicación'" in query
+        assert "WHERE area_academica = 'comunicación'" in query
         # For general query, should NOT have year filter
         assert 'AND year' not in query
 
@@ -121,7 +121,7 @@ class TestBuildPredictionQuery:
         query = predictor._build_prediction_query('comunicación', year=2022)
 
         assert 'enla_model_comunicación_v1_2022' in query
-        assert "WHERE area = 'comunicación'" in query
+        assert "WHERE area_academica = 'comunicación'" in query
         assert 'AND year = 2022' in query
 
     def test_build_prediction_query_matematica(self, predictor: ENLAPredictor):
@@ -130,7 +130,7 @@ class TestBuildPredictionQuery:
         query = predictor._build_prediction_query('matemática')
 
         assert 'enla_model_matemática_v1' in query
-        assert "WHERE area = 'matemática'" in query
+        assert "WHERE area_academica = 'matemática'" in query
 
     def test_build_prediction_query_matematica_year_specific(self, predictor: ENLAPredictor):
         """Verify SQL structure for matemática area with year filter."""
@@ -138,7 +138,7 @@ class TestBuildPredictionQuery:
         query = predictor._build_prediction_query('matemática', year=2023)
 
         assert 'enla_model_matemática_v1_2023' in query
-        assert "WHERE area = 'matemática'" in query
+        assert "WHERE area_academica = 'matemática'" in query
         assert 'AND year = 2023' in query
 
     def test_build_prediction_query_ccss(self, predictor: ENLAPredictor):
@@ -146,7 +146,7 @@ class TestBuildPredictionQuery:
         query = predictor._build_prediction_query('ccss')
 
         assert 'enla_model_ccss_v1' in query
-        assert "WHERE area = 'ccss'" in query
+        assert "WHERE area_academica = 'ccss'" in query
         # ccss is general area, should NOT have year filter
         assert 'AND year' not in query
 
@@ -155,7 +155,7 @@ class TestBuildPredictionQuery:
         query = predictor._build_prediction_query('cyt')
 
         assert 'enla_model_cyt_v1' in query
-        assert "WHERE area = 'cyt'" in query
+        assert "WHERE area_academica = 'cyt'" in query
         # cyt is general area, should NOT have year filter
         assert 'AND year' not in query
 
@@ -428,6 +428,133 @@ class TestRiskDistribution:
 
         assert summary['total_predictions'] == 0
         assert summary['risk_distribution'] == {'ALTO': 0, 'MEDIO': 0, 'BAJO': 0}
+
+
+# ==========================================
+# Test: Fallback v2 → v1 (RF-017)
+# ==========================================
+
+class TestFallbackPredictor:
+    """Tests for automatic v2→v1 fallback logic."""
+
+    def test_predict_with_v2_success(self, predictor: ENLAPredictor):
+        """Verify prediction with explicit v2 version works."""
+        predictor.model_version = 'v2'
+        mock_predictions = pd.DataFrame({
+            'predicted_target': [1, 0],
+            'predicted_target_probability': [0.85, 0.40],
+            'institution_id': ['IE001', 'IE002'],
+        })
+        predictor.bq_manager.query.return_value = mock_predictions
+
+        result = predictor._predict_with_version('comunicacion', year=None, version='v2')
+        assert len(result) == 2
+        assert 'risk_level' in result.columns
+
+    def test_predict_with_v1_success(self, predictor: ENLAPredictor):
+        """Verify prediction with explicit v1 version works."""
+        mock_predictions = pd.DataFrame({
+            'predicted_target': [1],
+            'predicted_target_probability': [0.80],
+            'institution_id': ['IE001'],
+        })
+        predictor.bq_manager.query.return_value = mock_predictions
+
+        result = predictor._predict_with_version('comunicacion', year=None, version='v1')
+        assert len(result) == 1
+        assert 'risk_level' in result.columns
+
+    def test_predict_with_version_restores_original(self, predictor: ENLAPredictor):
+        """Verify _predict_with_version restores model_version after call."""
+        predictor.model_version = 'v2'
+        mock_predictions = pd.DataFrame({
+            'predicted_target': [1],
+            'predicted_target_probability': [0.80],
+            'institution_id': ['IE001'],
+        })
+        predictor.bq_manager.query.return_value = mock_predictions
+
+        predictor._predict_with_version('comunicacion', year=None, version='v1')
+        # Original version should be restored
+        assert predictor.model_version == 'v2'
+
+    def test_predict_with_version_error_restores_original(self, predictor: ENLAPredictor):
+        """Verify original model_version is restored even on error."""
+        predictor.model_version = 'v2'
+        predictor.bq_manager.query.side_effect = Exception("Query failed")
+
+        with pytest.raises(PredictionError):
+            predictor._predict_with_version('comunicacion', year=None, version='v1')
+
+        # Original version should be restored even after error
+        assert predictor.model_version == 'v2'
+
+    def test_predict_for_area_v2_success_no_fallback(self, predictor: ENLAPredictor):
+        """Verify predict_for_area uses v2 and succeeds (no fallback needed)."""
+        predictor.model_version = 'v2'
+        mock_predictions = pd.DataFrame({
+            'predicted_target': [1, 0, 1],
+            'predicted_target_probability': [0.85, 0.40, 0.70],
+            'institution_id': ['IE001', 'IE002', 'IE003'],
+        })
+        predictor.bq_manager.query.return_value = mock_predictions
+
+        result = predictor.predict_for_area('comunicacion')
+        assert len(result) == 3
+
+        # Verify the query used v2 model
+        call_args = predictor.bq_manager.query.call_args
+        query = call_args[0][0]
+        assert '_v2' in query
+
+    def test_predict_for_area_v2_fails_falls_back_to_v1(self, predictor: ENLAPredictor):
+        """Verify fallback from v2 to v1 when v2 prediction fails."""
+        predictor.model_version = 'v2'
+        call_count = {'count': 0}
+
+        mock_predictions_v1 = pd.DataFrame({
+            'predicted_target': [1],
+            'predicted_target_probability': [0.80],
+            'institution_id': ['IE001'],
+        })
+
+        def mock_query(sql):
+            call_count['count'] += 1
+            if call_count['count'] == 1:
+                raise Exception("v2 model not found")
+            return mock_predictions_v1
+
+        predictor.bq_manager.query = mock_query
+
+        result = predictor.predict_for_area('comunicacion', year=2022)
+        assert len(result) == 1
+        assert call_count['count'] == 2  # First v2 fails, second v1 succeeds
+
+    def test_predict_for_area_both_fail_raises_error(self, predictor: ENLAPredictor):
+        """Verify PredictionError is raised when both v2 and v1 fail."""
+        predictor.model_version = 'v2'
+        predictor.bq_manager.query.side_effect = Exception("Query failed")
+
+        with pytest.raises(PredictionError) as excinfo:
+            predictor.predict_for_area('comunicacion')
+
+        assert 'Both v2 and v1' in str(excinfo.value)
+
+    def test_predict_for_area_v2_default_no_year(self, predictor: ENLAPredictor):
+        """Verify default model_version is v2 (from init) and predict_all_years works."""
+        predictor.model_version = 'v2'
+        mock_predictions = pd.DataFrame({
+            'predicted_target': [1],
+            'predicted_target_probability': [0.80],
+            'institution_id': ['IE001'],
+        })
+        predictor.bq_manager.query.side_effect = [
+            mock_predictions,  # 2022
+            mock_predictions,  # 2023
+        ]
+
+        result = predictor.predict_for_area('comunicación')  # No year = predict all years
+        assert len(result) == 2  # 2 years combined
 
 
 # ==========================================

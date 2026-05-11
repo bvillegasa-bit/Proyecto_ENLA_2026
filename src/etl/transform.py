@@ -155,11 +155,12 @@ class ETLTransform:
     """Core ETL transformation engine for ENLA data.
     
     Transforms raw MongoDB data into BigQuery fact and dimension tables:
-    1. Extract: Query MongoDB enla_callao_raw collection
-    2. Transform: Pivot wide format → long format by area (DYNAMIC column discovery)
-    3. Create dimensions: dim_meta, dim_calendario
-    4. Load: Insert to BigQuery tables
-    5. Validate: Data quality checks
+    1. Extract: Query MongoDB from configurable collection (default: enla_all_peru_raw)
+    2. Filter: Apply nom_dre == 'CALLAO' filter in MongoDB query
+    3. Transform: Pivot wide format → long format by area (DYNAMIC column discovery)
+    4. Create dimensions: dim_meta, dim_calendario
+    5. Load: Insert to BigQuery tables
+    6. Validate: Data quality checks
     
     KEY CHANGES (2026-05-03):
     - Column names discovered DYNAMICALLY (vary by year: 2021/2022/2023)
@@ -341,22 +342,25 @@ class ETLTransform:
     
     def _extract_from_mongodb(self, year: Optional[int] = None) -> pd.DataFrame:
         """
-        Extract records from MongoDB enla_callao_raw collection.
+        Extract records from MongoDB ETL source collection (default: enla_all_peru_raw).
+        
+        Applies region filter (nom_dre == 'CALLAO') to ensure only Callao data
+        reaches BigQuery, even when the source collection contains all-Peru data.
         
         Args:
             year: Optional year filter
             
         Returns:
-            DataFrame with raw ENLA data
+            DataFrame with raw ENLA data (Callao only)
         """
         try:
             collection = self.mongo_manager.get_collection(
                 settings.MONGODB_DB,
-                settings.MONGODB_COLLECTION_RAW
+                settings.MONGODB_ETL_SOURCE_COLLECTION
             )
             
-            # Build query
-            query = {}
+            # Build query with Callao region filter (RF-007)
+            query = {'nom_dre': 'CALLAO'}
             if year:
                 query['ano_evaluacion'] = year
             
@@ -407,11 +411,13 @@ class ETLTransform:
         logger.info(f"Year parameter: {year}")
         
         # Determine year
+        # NOTE: Data comes from MongoDB with already-standardized column names
+        # (ENLA column_mapping.py is applied during ingestion), so we access
+        # 'ano_evaluacion' directly from the DataFrame (no col_mapping needed)
         if year is None:
             try:
-                if 'ano_evaluacion' in col_mapping:
-                    year_col = col_mapping['ano_evaluacion']
-                    year_values = raw_df[year_col].dropna()
+                if 'ano_evaluacion' in raw_df.columns:
+                    year_values = raw_df['ano_evaluacion'].dropna()
                     if len(year_values) > 0:
                         year = int(float(year_values.iloc[0]))
                         logger.info(f"Year from 'ano_evaluacion' column: {year}")
@@ -479,12 +485,15 @@ class ETLTransform:
                 logger.info(f"  Sample raw values: {list(measure_raw[:3])}")
                 logger.info(f"  Sample cleaned scores: {list(scores[:3])}")
                 
+                # Use per-record ano_evaluacion instead of global year variable
+                per_record_year = pd.to_numeric(raw_df['ano_evaluacion'], errors='coerce')
+
                 area_df = pd.DataFrame({
                     'id_ie': raw_df['id_ie'],
                     'id_seccion': raw_df['id_seccion'],
                     'nom_ie': raw_df['nom_ie'] if 'nom_ie' in raw_df.columns else None,
                     'nom_dre': raw_df['nom_dre'] if 'nom_dre' in raw_df.columns else None,
-                    'year': year,
+                    'year': per_record_year,
                     'area': raw_df['area'] if 'area' in raw_df.columns else None,
                     'cor_est': raw_df['cor_est'],
                     'area_academica': area_display,  # Use accent-normalized name for display

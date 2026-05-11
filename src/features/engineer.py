@@ -96,7 +96,7 @@ class FeatureEngineer:
     """
 
     def __init__(self, bigquery_client: Optional[BigQueryClientManager] = None,
-                 target_threshold: float = 60.0,
+                 target_threshold: float = 500.0,
                  norm_min: float = -1.0,
                  norm_max: float = 1.0):
         """
@@ -492,13 +492,15 @@ class FeatureEngineer:
 
         for year in PREDICTION_YEARS:
             year_df = avg_df.copy()
+            year_df['avg_2021'] = year_df['avg_2021'].fillna(0.0)
 
             # For each year, we need to create features that would be available at prediction time
             # For predicting year Y, we use data from years < Y
             if year == 2022:
-                # To predict 2022, use 2021 data
-                year_df['avg_score'] = year_df['avg_2021']
-                year_df['raw_avg_score'] = year_df['avg_2021']
+                # No 2021 data available, use avg_2022 as the target basis
+                # (this makes 2022 the "train on known data" model)
+                year_df['avg_score'] = year_df['avg_2022']
+                year_df['raw_avg_score'] = year_df['avg_2022']
                 # Trend: not applicable for first prediction year, set to 0
                 year_df['trend'] = 0.0
                 year_df['raw_trend'] = 0.0
@@ -506,7 +508,7 @@ class FeatureEngineer:
                 year_df['variance'] = 0.0
                 year_df['raw_variance'] = 0.0
             elif year == 2023:
-                # To predict 2023, use 2021-2022 data
+                # To predict 2023, use 2022 data as feature, target = binary(avg_2023 > threshold)
                 year_df['avg_score'] = year_df['avg_2023']
                 year_df['raw_avg_score'] = year_df['avg_2023']
                 # Trend: 2023 vs 2022
@@ -549,7 +551,6 @@ class FeatureEngineer:
             # Generate target based on that year's score
             meta_threshold = self.target_threshold
             if meta_overrides:
-                # Apply per-institution overrides if available
                 year_df['target'] = year_df.apply(
                     lambda row: 1 if row['raw_avg_score'] > meta_overrides.get(row['institution_id'], meta_threshold) else 0,
                     axis=1
@@ -561,12 +562,23 @@ class FeatureEngineer:
                     np.where(year_df['raw_avg_score'] > meta_threshold, 1, 0)
                 ).astype('float64')
 
+            # Filter out rows with NaN target (no valid target data)
+            before = len(year_df)
+            year_df = year_df.dropna(subset=['target'])
+            after = len(year_df)
+            if after < before:
+                logger.info(f"Dropped {before - after} rows with NaN target for year {year}")
+
             # Add area column
             year_df['area_academica'] = area
 
             all_rows.append(year_df)
 
         # Combine all years
+        if not all_rows:
+            logger.warning(f"No rows generated for area '{area}'")
+            return pd.DataFrame()
+
         result_df = pd.concat(all_rows, ignore_index=True)
         logger.info(f"Per-year feature engineering complete for area '{area}' | total_rows={len(result_df)}")
 
@@ -636,6 +648,13 @@ class FeatureEngineer:
 
         # year is NULL for general areas
         avg_df['year'] = np.nan
+
+        # Filter out rows with NaN target
+        before = len(avg_df)
+        avg_df = avg_df.dropna(subset=['target'])
+        after = len(avg_df)
+        if after < before:
+            logger.info(f"Dropped {before - after} rows with NaN target for general area '{area}'")
 
         logger.info(f"General feature engineering complete for area '{area}' | institutions={len(avg_df)}")
 
@@ -783,6 +802,7 @@ class FeatureEngineer:
                 # NOTE: BigQuery schema expects 'area_academica', not 'area'
                 expected_cols = [
                     'feature_id', 'area_academica', 'institution_id', 'nom_ie',
+                    'year',
                     'avg_score_2023', 'avg_score_2022', 'avg_score_2021',
                     'trend', 'variance',
                     'target',
@@ -903,5 +923,6 @@ def run_feature_pipeline(bigquery_client: Optional[BigQueryClientManager] = None
     Returns:
         FeaturePipelineResult with execution summary
     """
-    engineer = FeatureEngineer(bigquery_client=bigquery_client)
+    engineer = FeatureEngineer(bigquery_client=bigquery_client,
+                                target_threshold=settings.TARGET_SCORE_THRESHOLD)
     return engineer.run_full_pipeline(meta_overrides=meta_overrides)

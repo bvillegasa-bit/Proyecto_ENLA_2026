@@ -13,8 +13,13 @@ class Settings(BaseSettings):
     # MongoDB Configuration
     MONGODB_URI: str = os.getenv('MONGODB_URI', '')
     MONGODB_DB: str = 'enla_db'
-    MONGODB_COLLECTION_RAW: str = 'enla_callao_raw'
+    MONGODB_COLLECTION_RAW: str = 'enla_callao_raw'  # Existing: Callao-only collection (legacy ETL source)
     MONGODB_COLLECTION_LOG: str = 'enla_ingestion_log'
+
+    # Data Lake Configuration (MongoDB as raw data lake for ALL Peru data)
+    MONGODB_COLLECTION_ALL_PERU: str = 'enla_all_peru_raw'  # New: all-Peru raw data lake (no region filter)
+    MONGODB_DATALAKE_ENABLED: bool = False  # Toggle: when True, ingest() also populates enla_all_peru_raw
+    MONGODB_ETL_SOURCE_COLLECTION: str = 'enla_all_peru_raw'  # Source collection for ETL extraction
     
     # GCP Configuration
     GCP_PROJECT_ID: str = os.getenv('GCP_PROJECT_ID', '')
@@ -43,7 +48,7 @@ class Settings(BaseSettings):
     LOG_FORMAT: str = 'json'  # json or text
     
     # Feature Engineering Configuration
-    TARGET_SCORE_THRESHOLD: float = 60.0  # Minimum score to pass
+    TARGET_SCORE_THRESHOLD: float = 576.0  # Minimum score to pass (scale 0-1000). Calculated as rounded median of real scores (N=24910, all areas, 2022-2023)
     FEATURE_NORMALIZATION_MIN: float = -1.0
     FEATURE_NORMALIZATION_MAX: float = 1.0
     

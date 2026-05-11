@@ -6,7 +6,7 @@ from typing import Dict, List, Optional, Any
 from datetime import datetime
 import uuid
 import re
-from pymongo.errors import PyMongoError, DuplicateKeyError
+from pymongo.errors import PyMongoError, DuplicateKeyError, BulkWriteError
 
 from src.logging.setup import get_logger
 from src.ingestion.validators import ENLAValidator, ValidationReport
@@ -107,6 +107,15 @@ class ENLAIngestor:
             self.db = self.client[self.db_name]
             self.mongo_collection = self.db[self.collection_raw]
             self.log_collection = self.db[self.collection_log]
+            
+            # T-005: Ensure compound index for query performance
+            # Index on (nom_dre, ano_evaluacion) optimizes ETL queries that filter by region + year
+            try:
+                self.mongo_collection.create_index([("nom_dre", 1), ("ano_evaluacion", 1)])
+                logger.info("Ensured compound index (nom_dre, ano_evaluacion) on collection")
+            except Exception as e:
+                logger.warning(f"Could not create index on collection | error={str(e)}")
+            
             logger.info("MongoDB connection successful")
         except MongoConnectionError as e:
             logger.error(f"Failed to connect to MongoDB | error={str(e)}")
@@ -256,11 +265,15 @@ class ENLAIngestor:
             logger.info("Added missing 'grado_evaluacion' column with default value 2 (all data is 2do)")
 
         # Add year column from filename if not present in data
-        if year and 'ano_evaluacion' not in df.columns:
+        # Also overwrite if schema auto-added it as all-null
+        if year and ('ano_evaluacion' not in df.columns or df['ano_evaluacion'].isna().all()):
             df['ano_evaluacion'] = year
             logger.info(f"Added 'ano_evaluacion' column with year {year} from filename")
         elif 'ano_evaluacion' in df.columns:
-            logger.info(f"Using 'ano_evaluacion' from Excel data (years: {df['ano_evaluacion'].unique()})")
+            if not df['ano_evaluacion'].isna().all():
+                logger.info(f"Using 'ano_evaluacion' from Excel data (years: {df['ano_evaluacion'].unique()})")
+            else:
+                logger.warning("'ano_evaluacion' column is all-null, but no year detected from filename")
         else:
             logger.warning("No 'ano_evaluacion' column and no year provided - data will use default")
 
@@ -269,45 +282,56 @@ class ENLAIngestor:
     def filter_data(self, df: pd.DataFrame,
                    region: str = None,
                    grado: int = None,
-                   year: int = None) -> pd.DataFrame:
+                   year: int = None,
+                   skip_region_filter: bool = False) -> pd.DataFrame:
         """
         Filter data by region, grade, and year.
         
         Args:
             df: DataFrame to filter
-            region: Region name (default from settings)
+            region: Region name (default from settings). Ignored if skip_region_filter=True.
             grado: Grade level (default from settings)
             year: Specific year to filter (if None, uses settings.ENLA_YEARS)
+            skip_region_filter: If True, skip region filtering (ingest ALL regions).
+                               Grade filter is STILL applied (BR-003).
         
         Returns:
             Filtered DataFrame
         """
-        region = region or settings.ENLA_REGION
         grado = grado or settings.ENLA_GRADO
+        region = settings.ENLA_REGION if not skip_region_filter else '__ALL__'
         
         original_size = len(df)
         
-        # Filter by region (columns are now standardized to 'nom_dre')
+        # Filter by region (only if skip_region_filter is False)
         if 'nom_dre' in df.columns:
             df.loc[:, 'nom_dre'] = df['nom_dre'].str.upper().str.strip()
-            unique_regions = df['nom_dre'].unique().tolist()
-            df = df[df['nom_dre'] == region.upper()].copy()
-            if len(df) == 0:
-                logger.warning(f"Region filter returned 0 rows. Region: {region.upper()}, Unique values in nom_dre: {unique_regions}")
-            logger.info(f"Filtered by region: {region}")
+            if not skip_region_filter:
+                region = region or settings.ENLA_REGION
+                unique_regions = df['nom_dre'].unique().tolist()
+                df = df[df['nom_dre'] == region.upper()].copy()
+                if len(df) == 0:
+                    logger.warning(f"Region filter returned 0 rows. Region: {region.upper()}, Unique values in nom_dre: {unique_regions}")
+                logger.info(f"Filtered by region: {region}")
+            else:
+                logger.info("Skipped region filter (ingesting ALL regions into data lake)")
         else:
             logger.warning(f"No region column 'nom_dre' found, skipping region filter")
         
         # Filter by grade (columns are now standardized to 'grado_evaluacion')
         if 'grado_evaluacion' in df.columns:
-            # Normalize grade values (handle string representations like '2do')
-            grade_map = {
-                '2do': 2, '3ro': 3, '4to': 4, '5to': 5,
-                '2': 2, '3': 3, '4': 4, '5': 5
-            }
-            df.loc[:, 'grado_evaluacion'] = df['grado_evaluacion'].map(lambda x: str(grade_map.get(str(x), x)))
-            df = df[df['grado_evaluacion'] == str(grado)].copy()
-            logger.info(f"Filtered by grade: {grado}")
+            # If the column is all-null (auto-added by schema), skip grade filter
+            if df['grado_evaluacion'].isna().all():
+                logger.info("Grade column is all-null (auto-added by schema), skipping grade filter")
+            else:
+                # Normalize grade values (handle string representations like '2do')
+                grade_map = {
+                    '2do': 2, '3ro': 3, '4to': 4, '5to': 5,
+                    '2': 2, '3': 3, '4': 4, '5': 5
+                }
+                df.loc[:, 'grado_evaluacion'] = df['grado_evaluacion'].map(lambda x: str(grade_map.get(str(x), x)))
+                df = df[df['grado_evaluacion'] == str(grado)].copy()
+                logger.info(f"Filtered by grade: {grado}")
         else:
             logger.warning(f"No grade column 'grado_evaluacion' found, skipping grade filter")
         
@@ -360,18 +384,25 @@ class ENLAIngestor:
         
         return df
     
-    def upsert_to_mongodb(self, df: pd.DataFrame) -> Dict[str, int]:
+    def upsert_to_mongodb(self, df: pd.DataFrame, batch_size: int = 500) -> Dict[str, int]:
         """
-        UPSERT DataFrame rows to MongoDB.
+        UPSERT DataFrame rows to MongoDB using bulk operations.
+        
+        Uses bulk_write with UpdateOne operations for maximum performance
+        when ingesting large datasets (10K+ rows) over network connections.
         
         Args:
             df: DataFrame to insert
+            batch_size: Number of operations per bulk batch (default 500)
+                       MongoDB max batch size is 100,000 operations.
         
         Returns:
             Dict with insert/update counts
         """
         if self.mongo_collection is None:
             raise IngestionError("MongoDB collection not initialized")
+        
+        from pymongo import UpdateOne
         
         counts = {
             'inserted': 0,
@@ -380,29 +411,55 @@ class ENLAIngestor:
             'errors': []
         }
         
+        # Build all operations
+        operations = []
         for idx, row in df.iterrows():
+            filter_doc = {k: row[k] for k in self.UPSERT_KEY}
+            update_doc = {'$set': row.to_dict()}
+            operations.append(
+                UpdateOne(filter_doc, update_doc, upsert=True)
+            )
+        
+        # Execute in batches
+        total_batches = (len(operations) + batch_size - 1) // batch_size
+        for batch_idx in range(0, len(operations), batch_size):
+            batch = operations[batch_idx:batch_idx + batch_size]
+            batch_num = batch_idx // batch_size + 1
+            
             try:
-                filter_doc = {k: row[k] for k in self.UPSERT_KEY}
-                update_doc = {'$set': row.to_dict()}
+                result = self.mongo_collection.bulk_write(batch, ordered=False)
+                counts['inserted'] += result.upserted_count
+                counts['updated'] += result.modified_count
                 
-                result = self.mongo_collection.update_one(
-                    filter_doc,
-                    update_doc,
-                    upsert=True
-                )
+                logger.info(f"Bulk batch {batch_num}/{total_batches}: "
+                           f"inserted={result.upserted_count} "
+                           f"updated={result.modified_count}")
                 
-                if result.upserted_id:
-                    counts['inserted'] += 1
-                elif result.modified_count > 0:
-                    counts['updated'] += 1
+            except BulkWriteError as bwe:
+                # Partial failure — some ops succeeded, some didn't
+                details = bwe.details
+                counts['inserted'] += details.get('nUpserted', 0)
+                counts['updated'] += details.get('nModified', 0)
+                write_errors = details.get('writeErrors', [])
+                counts['failed'] += len(write_errors)
+                
+                for err in write_errors[:5]:  # Log first 5 errors
+                    err_msg = f"Batch row {err.get('index', '?')}: {err.get('errmsg', 'unknown')}"
+                    counts['errors'].append(err_msg)
+                    logger.warning(f"Bulk write error | {err_msg}")
+                
+                logger.warning(f"Bulk batch {batch_num}/{total_batches} partial: "
+                              f"failed={len(write_errors)}")
                 
             except PyMongoError as e:
-                counts['failed'] += 1
-                error_msg = f"Row {idx}: {str(e)}"
-                counts['errors'].append(error_msg)
-                logger.warning(f"Failed to upsert row | row_index={idx} error={str(e)}")
+                # Entire batch failed
+                counts['failed'] += len(batch)
+                err_msg = f"Batch {batch_num}: {str(e)}"
+                counts['errors'].append(err_msg)
+                logger.warning(f"Bulk batch {batch_num}/{total_batches} failed | error={str(e)}")
         
-        logger.info(f"UPSERT completed | inserted={counts['inserted']} updated={counts['updated']} failed={counts['failed']}")
+        logger.info(f"UPSERT completed | inserted={counts['inserted']} "
+                    f"updated={counts['updated']} failed={counts['failed']}")
         
         return counts
     
@@ -438,14 +495,20 @@ class ENLAIngestor:
     
     def ingest(self, file_path: str,
                region: str = None,
-               grado: int = None) -> Dict[str, Any]:
+               grado: int = None,
+               skip_region_filter: bool = False,
+               target_collection: str = None) -> Dict[str, Any]:
         """
         Execute full ingestion pipeline.
         
         Args:
             file_path: Path to Excel file (year will be extracted from filename)
-            region: Region filter (default from settings)
+            region: Region filter (default from settings). Ignored if skip_region_filter=True.
             grado: Grade filter (default from settings)
+            skip_region_filter: If True, skip region filtering (ingest ALL regions).
+                               Grade filter is STILL applied (BR-003).
+            target_collection: If provided, upsert to this collection instead of self.collection_raw.
+                              Used for ingest_all_peru() to target enla_all_peru_raw.
         
         Returns:
             Summary dict with ingestion results including 'year_extracted'
@@ -480,7 +543,9 @@ class ENLAIngestor:
             summary['rows_read'] = len(df)
             
             # Step 2: Filter data (pass year for filtering)
-            df = self.filter_data(df, region=region, grado=grado, year=year)
+            # When skip_region_filter=True, skip the region filter but apply grade filter (BR-003)
+            df = self.filter_data(df, region=region, grado=grado, year=year,
+                                  skip_region_filter=skip_region_filter)
             summary['rows_filtered'] = len(df)
             
             if len(df) == 0:
@@ -522,7 +587,21 @@ class ENLAIngestor:
             
             # Step 5: Connect to MongoDB and UPSERT
             self._connect()
+            
+            # Override collection if target_collection specified
+            original_collection_name = self.collection_raw
+            original_mongo_collection = self.mongo_collection
+            if target_collection is not None and self.db is not None:
+                self.collection_raw = target_collection
+                self.mongo_collection = self.db[target_collection]
+                logger.info(f"Using target collection: {target_collection}")
+            
             upsert_counts = self.upsert_to_mongodb(df)
+            
+            # Restore original collection reference
+            if target_collection is not None and self.db is not None:
+                self.collection_raw = original_collection_name
+                self.mongo_collection = original_mongo_collection
             
             summary['rows_inserted'] = upsert_counts['inserted']
             summary['rows_updated'] = upsert_counts['updated']
@@ -535,6 +614,60 @@ class ENLAIngestor:
             summary['status'] = 'success' if summary['rows_inserted'] > 0 else 'failed'
             logger.info(f"Ingestion completed | ingestion_id={self.ingestion_id} status='{summary['status']}' year={year}")
             
+            # =========================================================
+            # T-004: Dual mode — if DATALAKE enabled and this is the
+            # normal Callao path, also insert into enla_all_peru_raw
+            # =========================================================
+            if (settings.MONGODB_DATALAKE_ENABLED
+                and not skip_region_filter
+                and not target_collection
+                and summary['status'] == 'success'):
+                
+                logger.info("MONGODB_DATALAKE_ENABLED=True: Performing dual insertion to Data Lake")
+                
+                try:
+                    # Re-read file for all-peru insertion (clean separation)
+                    df_all = self.read_excel(file_path, year=year)
+                    # Skip region filter but keep grade filter (BR-003)
+                    df_all = self.filter_data(df_all, grado=grado, year=year,
+                                              skip_region_filter=True)
+                    
+                    if len(df_all) > 0:
+                        # Validate (warnings only, don't block)
+                        self.validate(df_all)
+                        
+                        # Deduplicate
+                        df_all = self.deduplicate(df_all)
+                        df_all = df_all.dropna(subset=self.UPSERT_KEY)
+                        df_all = df_all.where(pd.notnull(df_all), None)
+                        
+                        if len(df_all) > 0:
+                            # Switch to all-peru collection
+                            all_peru_collection = self.db[settings.MONGODB_COLLECTION_ALL_PERU]
+                            
+                            # T-005: Ensure index on all-peru collection
+                            try:
+                                all_peru_collection.create_index(
+                                    [("nom_dre", 1), ("ano_evaluacion", 1)]
+                                )
+                            except Exception as e:
+                                logger.warning(f"Could not create index on data lake collection | error={str(e)}")
+                            
+                            # Upsert to data lake collection
+                            self.mongo_collection = all_peru_collection
+                            upsert_all = self.upsert_to_mongodb(df_all)
+                            # Restore
+                            self.mongo_collection = original_mongo_collection
+                            
+                            summary['rows_datalake_inserted'] = upsert_all['inserted']
+                            summary['rows_datalake_updated'] = upsert_all['updated']
+                            logger.info(f"Data Lake dual insertion: "
+                                        f"inserted={upsert_all['inserted']} "
+                                        f"updated={upsert_all['updated']}")
+                except Exception as lake_err:
+                    logger.warning(f"Data Lake dual insertion failed (non-blocking) | error={str(lake_err)}")
+                    summary['errors'].append(f"Data Lake insertion warning: {str(lake_err)}")
+            
         except Exception as e:
             summary['status'] = 'failed'
             summary['errors'].append(str(e))
@@ -546,6 +679,32 @@ class ENLAIngestor:
             self._disconnect()
         
         return summary
+
+
+    def ingest_all_peru(self, file_path: str) -> Dict[str, Any]:
+        """
+        Ingest ALL Peru data into the raw data lake collection.
+        
+        This is the Data Lake ingestion method:
+        - Reads the Excel file same as ingest()
+        - Skips the region filter (nom_dre == 'CALLAO')
+        - Still applies the grade filter (grado_evaluacion == 2) per BR-003
+        - Inserts into enla_all_peru_raw collection
+        - Uses the same column mapping, validation, and upsert logic
+        - Preserves the existing enla_callao_raw collection unchanged
+        
+        Args:
+            file_path: Path to Excel file (year will be extracted from filename)
+        
+        Returns:
+            Summary dict with ingestion results
+        """
+        logger.info("Starting all-Peru data lake ingestion (no region filter)")
+        return self.ingest(
+            file_path,
+            skip_region_filter=True,
+            target_collection=settings.MONGODB_COLLECTION_ALL_PERU
+        )
 
 
 def ingest_enla_xlsx(file_path: str,
@@ -566,3 +725,19 @@ def ingest_enla_xlsx(file_path: str,
     """
     ingestor = ENLAIngestor(mongodb_uri=mongodb_uri)
     return ingestor.ingest(file_path, region=region, grado=grado)
+
+
+def ingest_enla_xlsx_all_peru(file_path: str,
+                              mongodb_uri: str = None) -> Dict[str, Any]:
+    """
+    Convenience function for all-Peru ingestion into the Data Lake.
+    
+    Args:
+        file_path: Path to Excel file
+        mongodb_uri: MongoDB connection string
+    
+    Returns:
+        Summary dict
+    """
+    ingestor = ENLAIngestor(mongodb_uri=mongodb_uri)
+    return ingestor.ingest_all_peru(file_path)

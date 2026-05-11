@@ -58,9 +58,15 @@ def trainer(mock_bq_manager) -> ModelTrainer:
     trainer.bq_manager = mock_bq_manager
     trainer.project_id = 'test-project'
     trainer.dataset_id = 'BI_ENLA'
-    trainer.l2_reg = 0.1
-    trainer.max_iterations = 20
-    trainer.ls_init_learn_rate = 0.1  # Match constructor parameter name
+    trainer.model_type = 'BOOSTED_TREE_CLASSIFIER'
+    trainer.max_tree_depth = 6
+    trainer.subsample = 0.8
+    trainer.learn_rate = 0.3
+    trainer.max_iterations = 50
+    trainer.min_tree_child_weight = 2
+    trainer.l1_reg = 0.0
+    trainer.l2_reg = 0.0
+    trainer.early_stop = True
     return trainer
 
 
@@ -77,16 +83,20 @@ class TestBuildTrainingQuery:
         query = trainer._build_training_query('comunicación')
 
         assert 'CREATE OR REPLACE MODEL' in query
-        assert 'enla_model_comunicación_v1' in query
-        assert "model_type='logistic_reg'" in query
+        assert 'enla_model_comunicación_v2' in query
+        assert "model_type='BOOSTED_TREE_CLASSIFIER'" in query
         assert "input_label_cols=['target']" in query
         assert "data_split_method='CUSTOM'" in query
         assert "data_split_col='split'" in query
-        assert "l2_reg=0.1" in query
-        assert "max_iterations=20" in query
-        assert "ls_init_learn_rate=0.1" in query
-        assert "early_stop=True" in query
-        assert "WHERE area = 'comunicación'" in query
+        assert "max_tree_depth=6" in query
+        assert "subsample=0.8" in query
+        assert "learn_rate=0.3" in query
+        assert "max_iterations=50" in query
+        assert "min_tree_child_weight=2" in query
+        assert "l1_reg=0.0" in query
+        assert "l2_reg=0.0" in query
+        assert "early_stop=TRUE" in query
+        assert "WHERE area_academica = 'comunicación'" in query
         # General query should NOT have year filter
         assert 'AND year' not in query
 
@@ -94,8 +104,8 @@ class TestBuildTrainingQuery:
         """Verify SQL structure for comunicación area with year filter (2022)."""
         query = trainer._build_training_query('comunicación', year=2022)
 
-        assert 'enla_model_comunicación_v1_2022' in query
-        assert "WHERE area = 'comunicación'" in query
+        assert 'enla_model_comunicación_v2_2022' in query
+        assert "WHERE area_academica = 'comunicación'" in query
         assert 'AND year = 2022' in query
 
     def test_build_training_query_matematica_year_specific(self, trainer: ModelTrainer):
@@ -103,16 +113,16 @@ class TestBuildTrainingQuery:
         # User said: "comunicación y matemática" (WITH accents!)
         query = trainer._build_training_query('matemática', year=2023)
 
-        assert 'enla_model_matemática_v1_2023' in query
-        assert "WHERE area = 'matemática'" in query
+        assert 'enla_model_matemática_v2_2023' in query
+        assert "WHERE area_academica = 'matemática'" in query
         assert 'AND year = 2023' in query
 
     def test_build_training_query_ccss_general(self, trainer: ModelTrainer):
         """Verify SQL structure for ccss area (general, all years)."""
         query = trainer._build_training_query('ccss')
 
-        assert 'enla_model_ccss_v1' in query
-        assert "WHERE area = 'ccss'" in query
+        assert 'enla_model_ccss_v2' in query
+        assert "WHERE area_academica = 'ccss'" in query
         # ccss is general area, should NOT have year filter
         assert 'AND year' not in query
 
@@ -120,8 +130,8 @@ class TestBuildTrainingQuery:
         """Verify SQL structure for cyt area (general, all years)."""
         query = trainer._build_training_query('cyt')
 
-        assert 'enla_model_cyt_v1' in query
-        assert "WHERE area = 'cyt'" in query
+        assert 'enla_model_cyt_v2' in query
+        assert "WHERE area_academica = 'cyt'" in query
         # cyt is general area, should NOT have year filter
         assert 'AND year' not in query
 
@@ -135,19 +145,28 @@ class TestBuildTrainingQuery:
 
     def test_build_training_query_includes_split_logic(self, trainer: ModelTrainer):
         """Verify temporal split logic is in the query."""
-        # User said: "comunicación y matemática" (WITH accents!)
-        query = trainer._build_training_query('comunicación')
+        # General area (no year filter): uses year-based split
+        query = trainer._build_training_query('ccss')
 
-        assert 'year_in_train' in query
-        assert "'train'" in query
-        assert "'eval'" in query
+        assert 'CAST(year <= 2022 AS BOOL) AS split' in query
+        assert "data_split_method='CUSTOM'" in query
+        assert "data_split_col='split'" in query
+
+    def test_build_training_query_year_specific_uses_random_split(self, trainer: ModelTrainer):
+        """Verify year-specific models use RANDOM split (all same year)."""
+        # Year-specific (year filter): no split column, uses RANDOM
+        query = trainer._build_training_query('comunicación', year=2022)
+
+        assert "data_split_method='RANDOM'" in query
+        # Should NOT have CUSTOM split logic in SELECT
+        assert 'AS split' not in query
 
     def test_build_training_query_uses_correct_project(self, trainer: ModelTrainer):
         """Verify fully qualified model name uses correct project/dataset."""
         # User said: "comunicación y matemática" (WITH accents!)
         query = trainer._build_training_query('comunicación')
 
-        assert 'test-project.BI_ENLA.enla_model_comunicación_v1' in query
+        assert 'test-project.BI_ENLA.enla_model_comunicación_v2' in query
         assert 'test-project.BI_ENLA.enla_callao_features' in query
 
 
@@ -348,28 +367,98 @@ class TestEvaluateModel:
 
 
 # ==========================================
-# Test: Feature Weights (Mocked)
+# Test: Feature Importance (ML.FEATURE_IMPORTANCE)
+# ==========================================
+
+class TestFeatureImportance:
+    """Tests for feature importance retrieval using ML.FEATURE_IMPORTANCE()."""
+
+    def test_feature_importance_success(self, trainer: ModelTrainer):
+        """Verify feature importance is returned as DataFrame."""
+        importance_data = {
+            'input_column_name': ['avg_score_2023', 'avg_score_2022', 'avg_score_2021', 'trend', 'variance'],
+            'attribute': ['gain', 'gain', 'gain', 'frequency', 'cover'],
+            'importance': [0.35, 0.25, 0.20, 0.12, 0.08],
+        }
+        mock_job = MagicMock()
+        mock_job.to_dataframe.return_value = pd.DataFrame(importance_data)
+        trainer.bq_manager.query.return_value = mock_job
+
+        result = trainer.get_feature_importance('comunicacion')
+
+        assert isinstance(result, pd.DataFrame)
+        assert len(result) == 5
+        assert 'input_column_name' in result.columns
+        assert 'attribute' in result.columns
+        assert 'importance' in result.columns
+
+    def test_feature_importance_uses_ml_feature_importance(self, trainer: ModelTrainer):
+        """Verify SQL query uses ML.FEATURE_IMPORTANCE()."""
+        # Create a mock job that has to_dataframe()
+        mock_job = MagicMock()
+        mock_job.to_dataframe.return_value = pd.DataFrame({
+            'input_column_name': [],
+            'attribute': [],
+            'importance': [],
+        })
+        trainer.bq_manager.query = MagicMock(return_value=mock_job)
+
+        trainer.get_feature_importance('comunicacion')
+
+        # Verify the SQL query contains ML.FEATURE_IMPORTANCE
+        call_args = trainer.bq_manager.query.call_args
+        query = call_args[0][0]
+        assert 'ML.FEATURE_IMPORTANCE' in query
+        assert 'MODEL' in query
+        # Should NOT contain ML.WEIGHTS
+        assert 'ML.WEIGHTS' not in query
+
+    def test_feature_importance_bq_error(self, trainer: ModelTrainer):
+        """Verify BigQuery error raises ModelTrainingError."""
+        trainer.bq_manager.query.side_effect = BigQueryConnectionError("Importance query failed")
+
+        with pytest.raises(ModelTrainingError):
+            trainer.get_feature_importance('comunicacion')
+
+    def test_feature_importance_default_version_v2(self, trainer: ModelTrainer):
+        """Verify get_feature_importance defaults to v2 model version."""
+        mock_job = MagicMock()
+        mock_job.to_dataframe.return_value = pd.DataFrame({
+            'input_column_name': [],
+            'attribute': [],
+            'importance': [],
+        })
+        trainer.bq_manager.query.return_value = mock_job
+
+        # Should use v2 by default (per spec RF-015)
+        result = trainer.get_feature_importance('comunicacion')
+        assert isinstance(result, pd.DataFrame)
+
+        # Verify the query includes _v2 in the model name
+        call_args = trainer.bq_manager.query.call_args
+        query = call_args[0][0]
+        assert 'enla_model_comunicacion_v2' in query or 'enla_model_comunicación_v2' in query
+
+
+# ==========================================
+# Test: Feature Weights (Deprecated)
 # ==========================================
 
 class TestFeatureWeights:
-    """Tests for feature weights retrieval."""
+    """Tests for deprecated feature weights retrieval."""
 
-    def test_feature_weights_success(self, trainer: ModelTrainer):
-        """Verify feature weights are returned as DataFrame."""
-        weights_data = {
-            'input': ['avg_score_2023', 'avg_score_2022', 'avg_score_2021', 'trend', 'variance', '__INTERCEPT__'],
-            'weight': [0.3, 0.25, 0.2, 0.15, 0.1, 0.0],
-            'processing_method': ['none'] * 5 + [''],
-        }
+    def test_feature_weights_deprecation_warning(self, trainer: ModelTrainer):
+        """Verify get_feature_weights() raises DeprecationWarning."""
         mock_job = MagicMock()
-        mock_job.to_dataframe.return_value = pd.DataFrame(weights_data)
+        mock_job.to_dataframe.return_value = pd.DataFrame({
+            'input': [],
+            'weight': [],
+            'processing_method': [],
+        })
         trainer.bq_manager.query.return_value = mock_job
 
-        result = trainer.get_feature_weights('comunicacion')
-
-        assert isinstance(result, pd.DataFrame)
-        assert len(result) == 6
-        assert 'weight' in result.columns
+        with pytest.warns(DeprecationWarning, match="get_feature_weights"):
+            trainer.get_feature_weights('comunicacion')
 
     def test_feature_weights_bq_error(self, trainer: ModelTrainer):
         """Verify BigQuery error raises ModelTrainingError."""

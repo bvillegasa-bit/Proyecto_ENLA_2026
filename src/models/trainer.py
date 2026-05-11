@@ -1,6 +1,6 @@
 """Model training module for ENLA 2026 Callao ML prediction pipeline.
 
-Trains BigQuery ML Logistic Regression models for each subject area:
+Trains BigQuery ML Boosted Tree Classifier models for each subject area:
 - comunicación, matemática, ccss, cyt
 
 Uses temporal train/test split:
@@ -82,7 +82,7 @@ class ModelTrainingPipelineResult:
 # ==========================================
 
 class ModelTrainer:
-    """Trains BigQuery ML Logistic Regression models for ENLA prediction.
+    """Trains BigQuery ML Boosted Tree Classifier models for ENLA prediction.
 
     Trains models per area with different strategies:
     - comunicación, matemática: Per-year prediction (2022, 2023) - trains separate models per year
@@ -106,9 +106,15 @@ class ModelTrainer:
     def __init__(self, bigquery_client: Optional[BigQueryClientManager] = None,
                  project_id: Optional[str] = None,
                  dataset_id: Optional[str] = None,
-                 l2_reg: float = 0.1,
-                 max_iterations: int = 20,
-                 ls_init_learn_rate: float = 0.1):
+                 model_type: str = 'BOOSTED_TREE_CLASSIFIER',
+                 max_tree_depth: int = 6,
+                 subsample: float = 0.8,
+                 learn_rate: float = 0.3,
+                 max_iterations: int = 50,
+                 min_tree_child_weight: int = 2,
+                 l1_reg: float = 0.0,
+                 l2_reg: float = 0.0,
+                 early_stop: bool = True):
         """
         Initialize ModelTrainer.
 
@@ -116,18 +122,30 @@ class ModelTrainer:
             bigquery_client: BigQueryClientManager instance. If None, uses global manager.
             project_id: GCP project ID. If None, reads from settings.
             dataset_id: BigQuery dataset ID. If None, reads from settings.
-            l2_reg: L2 regularization parameter.
-            max_iterations: Maximum training iterations.
-            ls_init_learn_rate: Learning rate for optimization.
+            model_type: BigQuery ML model type (default: 'BOOSTED_TREE_CLASSIFIER').
+            max_tree_depth: Maximum depth of each tree (default: 6).
+            subsample: Fraction of rows to use per iteration (default: 0.8).
+            learn_rate: Learning rate for boosting (default: 0.3).
+            max_iterations: Maximum number of training iterations (default: 50).
+            min_tree_child_weight: Minimum child weight for tree nodes (default: 2).
+            l1_reg: L1 regularization (default: 0.0).
+            l2_reg: L2 regularization (default: 0.0).
+            early_stop: Whether to use early stopping (default: True).
         """
         self.bq_manager = bigquery_client
         self.project_id = project_id or settings.GCP_PROJECT_ID
         self.dataset_id = dataset_id or settings.GCP_DATASET_ID
-        self.l2_reg = l2_reg
+        self.model_type = model_type
+        self.max_tree_depth = max_tree_depth
+        self.subsample = subsample
+        self.learn_rate = learn_rate
         self.max_iterations = max_iterations
-        self.ls_init_learn_rate = ls_init_learn_rate  # Learning rate parameter name in BigQuery ML
+        self.min_tree_child_weight = min_tree_child_weight
+        self.l1_reg = l1_reg
+        self.l2_reg = l2_reg
+        self.early_stop = early_stop
 
-        logger.info(f"ModelTrainer initialized | project_id={self.project_id} dataset_id={self.dataset_id} areas={self.AREAS} l2_reg={self.l2_reg} max_iterations={self.max_iterations} ls_init_learn_rate={self.ls_init_learn_rate}")
+        logger.info(f"ModelTrainer initialized | project_id={self.project_id} dataset_id={self.dataset_id} areas={self.AREAS} model_type={self.model_type} max_tree_depth={self.max_tree_depth} subsample={self.subsample} learn_rate={self.learn_rate} max_iterations={self.max_iterations}")
 
     def _get_bq_manager(self) -> BigQueryClientManager:
         """Get or create BigQuery manager."""
@@ -156,39 +174,64 @@ class ModelTrainer:
         Returns:
             SQL string for CREATE MODEL statement
         """
-        model_name = self._get_model_name(area, 'v1', year)
+        model_name = self._get_model_name(area, 'v2', year)
 
         feature_cols = ", ".join(self.FEATURE_COLUMNS)
 
         # Build WHERE clause
-        where_clause = f"WHERE area = '{area}'"
+        where_clause = f"WHERE area_academica = '{area}'"
         if year is not None:
             where_clause += f" AND year = {year}"
+
+        # Determine split strategy based on whether year filter is applied
+        # For year-specific models (year filter active): all rows share same year,
+        #   so use RANDOM split instead of temporal split
+        # For general models (no year filter): use temporal split (years <= 2022 = train, 2023 = eval)
+        if year is not None:
+            # Year-specific: use RANDOM split since all data is from same year
+            split_options = "data_split_method='RANDOM'"
+            # Wrap with IFNULL for robustness (features normalized to [-1,1], 0 is neutral)
+            null_safe_cols = ", ".join(
+                f"IFNULL({col}, 0.0) AS {col}" for col in self.FEATURE_COLUMNS
+            )
+            select_clause = f"""
+        SELECT
+            {null_safe_cols},
+            target
+        """
+        else:
+            # General: use temporal split by year
+            split_options = "data_split_method='CUSTOM',\n            data_split_col='split'"
+            null_safe_cols = ", ".join(
+                f"IFNULL({col}, 0.0) AS {col}" for col in self.FEATURE_COLUMNS
+            )
+            select_clause = f"""
+        SELECT
+            {null_safe_cols},
+            target,
+            CAST(year <= 2022 AS BOOL) AS split
+        """
 
         query = f"""
         CREATE OR REPLACE MODEL `{model_name}`
         OPTIONS(
-            model_type='logistic_reg',
+            model_type='{self.model_type}',
             input_label_cols=['target'],
-            data_split_method='CUSTOM',
-            data_split_col='split',
-            l2_reg={self.l2_reg},
+            {split_options},
+            max_tree_depth={self.max_tree_depth},
+            subsample={self.subsample},
+            learn_rate={self.learn_rate},
             max_iterations={self.max_iterations},
-            ls_init_learn_rate={self.ls_init_learn_rate},
-            early_stop=True
-        ) AS
-        SELECT
-            {feature_cols},
-            target,
-            CASE
-                WHEN year_in_train THEN 'train'
-                ELSE 'eval'
-            END AS split
+            min_tree_child_weight={self.min_tree_child_weight},
+            l1_reg={self.l1_reg},
+            l2_reg={self.l2_reg},
+            early_stop={str(self.early_stop).upper()}
+        ) AS{select_clause}
         FROM `{self.project_id}.{self.dataset_id}.enla_callao_features`
         {where_clause}
         """
 
-        logger.info(f"Training query built | area={area} year={year} model_name={model_name}")
+        logger.info(f"Training query built | area={area} year={year} model_name={model_name} model_type={self.model_type}")
         return query
 
     def _get_model_name(self, area: str, model_version: str = 'v1', year: Optional[int] = None) -> str:
@@ -233,10 +276,10 @@ class ModelTrainer:
         if year is None and area in self.YEAR_SPECIFIC_AREAS:
             return self._train_all_years_for_area(area)
 
-        model_name = self._get_model_name(area, 'v1', year)
+        model_name = self._get_model_name(area, 'v2', year)
         result.model_name = model_name
 
-        logger.info(f"Starting model training for area: {area} year: {year}")
+        logger.info(f"Starting model training for area: {area} year: {year} model_version=v2")
         start_time = time.time()
 
         try:
@@ -251,24 +294,22 @@ class ModelTrainer:
             training_query = self._build_training_query(area, year)
             logger.info(f"Executing training query | area={area} year={year}")
 
-            job = bq_manager.query(training_query)
-            job.result()  # Wait for training to complete
+            # Execute training query (bq_manager.query returns DataFrame after completion)
+            bq_manager.query(training_query)
 
             duration = time.time() - start_time
 
-            # Get training statistics from the job
+            # Get training statistics
             training_stats = {
-                'job_id': job.job_id,
+                'job_id': model_name,
                 'model_name': model_name,
                 'duration_seconds': round(duration, 2),
-                'total_bytes_processed': job.total_bytes_processed,
-                'cache_hit': job.cache_hit,
             }
 
             result.status = "success"
             result.training_stats = training_stats
 
-            logger.info(f"Model training completed for area '{area}' year={year} | duration={duration} job_id={job.job_id}")
+            logger.info(f"Model training completed for area '{area}' year={year} | duration={duration} model={model_name}")
 
         except BigQueryConnectionError as e:
             error_msg = f"BigQuery connection error training model for '{area}' year={year}: {str(e)}"
@@ -487,9 +528,56 @@ class ModelTrainer:
 
         return results
 
+    def get_feature_importance(self, area: str, model_version: str = 'v2') -> pd.DataFrame:
+        """
+        Get feature importance using ML.FEATURE_IMPORTANCE() for tree models.
+
+        ML.FEATURE_IMPORTANCE() returns importance metrics for each feature:
+        - gain: Total gain of splits which use the feature
+        - cover: Number of training examples covered by splits using the feature
+        - frequency: How often the feature is used in tree splits
+
+        Args:
+            area: Subject area
+            model_version: Model version string (default: 'v2')
+
+        Returns:
+            DataFrame with feature importance metrics
+        """
+        model_name = self._get_model_name(area, model_version)
+
+        logger.info(f"Getting feature importance for model: {model_name}")
+
+        try:
+            bq_manager = self._get_bq_manager()
+
+            importance_query = f"""
+            SELECT *
+            FROM ML.FEATURE_IMPORTANCE(MODEL `{model_name}`)
+            """
+
+            importance_df = bq_manager.query(importance_query).to_dataframe()
+
+            logger.info(f"Feature importance retrieved for '{area}' | features={len(importance_df)}")
+
+            return importance_df
+
+        except BigQueryConnectionError as e:
+            error_msg = f"BigQuery error getting feature importance for '{area}': {str(e)}"
+            logger.error(error_msg)
+            raise ModelTrainingError(error_msg)
+
+        except Exception as e:
+            error_msg = f"Unexpected error getting feature importance for '{area}': {str(e)}"
+            logger.error(error_msg, exc_info=True)
+            raise ModelTrainingError(error_msg)
+
     def get_feature_weights(self, area: str, model_version: str = 'v1') -> pd.DataFrame:
         """
-        Get feature coefficients using ML.WEIGHTS().
+        DEPRECATED: Get feature coefficients using ML.WEIGHTS().
+
+        This method only works for linear models (Logistic Regression).
+        For Boosted Tree models, use get_feature_importance() instead.
 
         Args:
             area: Subject area
@@ -498,6 +586,15 @@ class ModelTrainer:
         Returns:
             DataFrame with feature weights and processing methods
         """
+        import warnings
+        warnings.warn(
+            "get_feature_weights() is deprecated for Boosted Tree models. "
+            "Use get_feature_importance() instead. "
+            "ML.WEIGHTS() only works with linear models like logistic_reg.",
+            DeprecationWarning,
+            stacklevel=2
+        )
+
         model_name = self._get_model_name(area, model_version)
 
         logger.info(f"Getting feature weights for model: {model_name}")
@@ -623,25 +720,37 @@ class ModelTrainer:
 # ==========================================
 
 def run_model_training(bigquery_client: Optional[BigQueryClientManager] = None,
-                       l2_reg: float = 0.1,
-                       max_iterations: int = 20,
-                       ls_init_learn_rate: float = 0.1) -> ModelTrainingPipelineResult:
+                       max_tree_depth: int = 6,
+                       subsample: float = 0.8,
+                       learn_rate: float = 0.3,
+                       max_iterations: int = 50,
+                       min_tree_child_weight: int = 2,
+                       l1_reg: float = 0.0,
+                       l2_reg: float = 0.0) -> ModelTrainingPipelineResult:
     """
-    Run the complete model training pipeline.
+    Run the complete model training pipeline with Boosted Tree Classifier.
 
     Args:
         bigquery_client: BigQueryClientManager instance (optional)
-        l2_reg: L2 regularization parameter
-        max_iterations: Maximum training iterations
-        ls_init_learn_rate: Learning rate for optimization
+        max_tree_depth: Maximum depth of each tree (default: 6)
+        subsample: Fraction of rows to use per iteration (default: 0.8)
+        learn_rate: Learning rate for boosting (default: 0.3)
+        max_iterations: Maximum number of training iterations (default: 50)
+        min_tree_child_weight: Minimum child weight for tree nodes (default: 2)
+        l1_reg: L1 regularization (default: 0.0)
+        l2_reg: L2 regularization (default: 0.0)
 
     Returns:
         ModelTrainingPipelineResult with execution summary
     """
     trainer = ModelTrainer(
         bigquery_client=bigquery_client,
-        l2_reg=l2_reg,
+        max_tree_depth=max_tree_depth,
+        subsample=subsample,
+        learn_rate=learn_rate,
         max_iterations=max_iterations,
-        ls_init_learn_rate=ls_init_learn_rate,
+        min_tree_child_weight=min_tree_child_weight,
+        l1_reg=l1_reg,
+        l2_reg=l2_reg,
     )
     return trainer.train_all_models()

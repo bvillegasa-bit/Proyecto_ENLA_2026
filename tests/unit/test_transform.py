@@ -221,14 +221,15 @@ class TestPivotByArea2023:
             f"Missing columns: {expected_cols - set(result.columns)}"
     
     def test_year_from_parameter(self, mock_etl_transform: ETLTransform,
-                                 sample_raw_df_2023: pd.DataFrame):
-        """Verify that year parameter is used (not from data)."""
+                                 sample_raw_df_2023: pd.DataFrame,
+                                 sample_raw_df_2022: pd.DataFrame):
+        """Verify that year comes from ano_evaluacion column per-record."""
         result = mock_etl_transform._transform_to_long_format(sample_raw_df_2023, year=2023)
-        assert all(result['year'] == 2023), "Year should be 2023 (from parameter)"
+        assert all(result['year'] == 2023), "Year should be 2023 (from ano_evaluacion column)"
         
-        # Test with different year parameter
-        result_2022 = mock_etl_transform._transform_to_long_format(sample_raw_df_2023, year=2022)
-        assert all(result_2022['year'] == 2022), "Year should be 2022 (from parameter)"
+        # Use sample_raw_df_2022 which has ano_evaluacion=2022
+        result_2022 = mock_etl_transform._transform_to_long_format(sample_raw_df_2022, year=2022)
+        assert all(result_2022['year'] == 2022), "Year should be 2022 (from ano_evaluacion column)"
 
 
 # ==========================================
@@ -731,13 +732,86 @@ class TestYearFromFilename:
     
     def test_year_parameter_used(self, mock_etl_transform: ETLTransform,
                                   sample_raw_df_2023: pd.DataFrame):
-        """Verify that year parameter overrides data column."""
-        # Even if ano_evaluacion says 2023, if year=2022 is passed, use 2022
+        """Verify that year column comes from ano_evaluacion, not the parameter."""
+        # ano_evaluacion=2023 in sample_raw_df_2023, so year=2022 parameter is ignored
         result = mock_etl_transform._transform_to_long_format(sample_raw_df_2023, year=2022)
-        assert all(result['year'] == 2022), "Year parameter should be used"
+        assert all(result['year'] == 2023), "Year should be 2023 (from ano_evaluacion column)"
     
     def test_year_none_uses_data_column(self, mock_etl_transform: ETLTransform,
-                                         sample_raw_df_2023: pd.DataFrame):
+                                          sample_raw_df_2023: pd.DataFrame):
         """Verify that year=None tries to use ano_evaluacion column."""
         result = mock_etl_transform._transform_to_long_format(sample_raw_df_2023, year=None)
         assert all(result['year'] == 2023), "Should use year from ano_evaluacion column"
+
+
+# ==========================================
+# Test: ETL Extraction with Region Filter (RF-007, T-019)
+# ==========================================
+
+class TestExtractFromMongoDB:
+    """Tests for _extract_from_mongodb() with nom_dre filter."""
+
+    def test_extract_uses_all_peru_collection(self, mock_etl_transform: ETLTransform):
+        """Verify _extract_from_mongodb reads from enla_all_peru_raw collection."""
+        mock_collection = MagicMock()
+        mock_collection.find.return_value = []
+        mock_etl_transform.mongo_manager.get_collection.return_value = mock_collection
+
+        mock_etl_transform._extract_from_mongodb()
+
+        # Verify it reads from MONGODB_ETL_SOURCE_COLLECTION (enla_all_peru_raw)
+        call_args = mock_etl_transform.mongo_manager.get_collection.call_args
+        from src.ingestion.config import settings
+        assert call_args[0][1] == settings.MONGODB_ETL_SOURCE_COLLECTION
+
+    def test_extract_applies_nom_dre_filter(self, mock_etl_transform: ETLTransform):
+        """Verify query includes {'nom_dre': 'CALLAO'} filter."""
+        mock_collection = MagicMock()
+        mock_collection.find.return_value = []
+        mock_etl_transform.mongo_manager.get_collection.return_value = mock_collection
+
+        mock_etl_transform._extract_from_mongodb()
+
+        # Verify find was called with nom_dre filter
+        call_args = mock_collection.find.call_args
+        query = call_args[0][0]
+        assert 'nom_dre' in query
+        assert query['nom_dre'] == 'CALLAO'
+
+    def test_extract_with_year_filter(self, mock_etl_transform: ETLTransform):
+        """Verify year is combined with nom_dre filter."""
+        mock_collection = MagicMock()
+        mock_collection.find.return_value = []
+        mock_etl_transform.mongo_manager.get_collection.return_value = mock_collection
+
+        mock_etl_transform._extract_from_mongodb(year=2023)
+
+        call_args = mock_collection.find.call_args
+        query = call_args[0][0]
+        assert query == {'nom_dre': 'CALLAO', 'ano_evaluacion': 2023}
+
+    def test_extract_only_callao_data_in_bigquery(self, mock_etl_transform: ETLTransform):
+        """Verify that only Callao records are returned (no non-Callao data)."""
+        mock_collection = MagicMock()
+        # Simulate MongoDB returning only Callao records (filter applied at DB level)
+        mock_collection.find.return_value = [
+            {'_id': 'obj1', 'nom_dre': 'CALLAO', 'ano_evaluacion': 2023},
+            {'_id': 'obj2', 'nom_dre': 'CALLAO', 'ano_evaluacion': 2023},
+        ]
+        mock_etl_transform.mongo_manager.get_collection.return_value = mock_collection
+
+        result = mock_etl_transform._extract_from_mongodb()
+
+        assert len(result) == 2
+        assert all(result['nom_dre'] == 'CALLAO')
+
+    def test_extract_empty_result_returns_empty_df(self, mock_etl_transform: ETLTransform):
+        """Verify empty MongoDB result returns empty DataFrame."""
+        mock_collection = MagicMock()
+        mock_collection.find.return_value = []
+        mock_etl_transform.mongo_manager.get_collection.return_value = mock_collection
+
+        result = mock_etl_transform._extract_from_mongodb()
+
+        assert isinstance(result, pd.DataFrame)
+        assert result.empty

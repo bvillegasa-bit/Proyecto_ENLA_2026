@@ -3,6 +3,9 @@
 Generates predictions using trained BigQuery ML models and stores
 results in the predictions table.
 
+Supports fallback from v2 (Boosted Tree Classifier) to v1 (Logistic Regression)
+models for backward compatibility.
+
 Data flow:
     enla_callao_features (BigQuery) → ML.PREDICT() → enla_callao_predictions_2026
 """
@@ -84,7 +87,7 @@ class ENLAPredictor:
     def __init__(self, bigquery_client: Optional[BigQueryClientManager] = None,
                  project_id: Optional[str] = None,
                  dataset_id: Optional[str] = None,
-                 model_version: str = 'v1'):
+                 model_version: str = 'v2'):
         """
         Initialize ENLAPredictor.
 
@@ -92,7 +95,8 @@ class ENLAPredictor:
             bigquery_client: BigQueryClientManager instance. If None, uses global manager.
             project_id: GCP project ID. If None, reads from settings.
             dataset_id: BigQuery dataset ID. If None, reads from settings.
-            model_version: Model version string to use for predictions.
+            model_version: Model version string to use for predictions (default: 'v2').
+                          Falls back to 'v1' if v2 model is not found.
         """
         self.bq_manager = bigquery_client
         self.project_id = project_id or settings.GCP_PROJECT_ID
@@ -142,7 +146,7 @@ class ENLAPredictor:
         model_name = self._get_model_name(area, year)
 
         # Build WHERE clause
-        where_clause = f"WHERE area = '{area}'"
+        where_clause = f"WHERE area_academica = '{area}'"
         if year is not None and area in YEAR_SPECIFIC_AREAS:
             where_clause += f" AND year = {year}"
 
@@ -164,7 +168,10 @@ class ENLAPredictor:
 
     def predict_for_area(self, area: str, year: Optional[int] = None) -> pd.DataFrame:
         """
-        Generate predictions for one area.
+        Generate predictions for one area with automatic fallback.
+
+        Tries the configured model_version (v2 by default) first.
+        If v2 prediction fails, falls back to v1 (Logistic Regression) automatically.
 
         For year-specific areas (comunicación, matemática):
         - If year is specified, predicts for that specific year
@@ -181,7 +188,7 @@ class ENLAPredictor:
             DataFrame with predictions including predicted_success, confidence
 
         Raises:
-            PredictionError: If prediction fails
+            PredictionError: If prediction fails with ALL available model versions
         """
         logger.info(f"Generating predictions for area: {area} year: {year}")
 
@@ -193,6 +200,43 @@ class ENLAPredictor:
         if year is None and area in YEAR_SPECIFIC_AREAS:
             return self._predict_all_years_for_area(area)
 
+        # Try with configured version, fall back to v1 if v2 fails (RF-017)
+        try:
+            return self._predict_with_version(area, year, self.model_version)
+        except Exception as e:
+            if self.model_version == 'v2':
+                logger.warning(
+                    f"v2 prediction failed for '{area}' year={year}: {e}. "
+                    f"Falling back to v1 model."
+                )
+                try:
+                    return self._predict_with_version(area, year, 'v1')
+                except Exception as e2:
+                    raise PredictionError(
+                        f"Both v2 and v1 prediction failed for '{area}' year={year}: {e2}"
+                    ) from e2
+            raise PredictionError(
+                f"Prediction failed for '{area}' year={year}: {e}"
+            ) from e
+
+    def _predict_with_version(self, area: str, year: Optional[int],
+                               version: str) -> pd.DataFrame:
+        """
+        Execute prediction with a specific model version.
+
+        Args:
+            area: Subject area
+            year: Optional year for per-year prediction
+            version: Model version ('v1' or 'v2')
+
+        Returns:
+            DataFrame with predictions
+
+        Raises:
+            PredictionError: If prediction fails
+        """
+        original_version = self.model_version
+        self.model_version = version
         try:
             bq_manager = self._get_bq_manager()
             bq_manager.connect()
@@ -201,7 +245,7 @@ class ENLAPredictor:
             predictions_df = bq_manager.query(prediction_query)
 
             if predictions_df.empty:
-                logger.warning(f"No predictions generated for area '{area}' year={year}")
+                logger.warning(f"No predictions generated for area '{area}' year={year} version={version}")
                 return pd.DataFrame()
 
             # Add risk classification
@@ -222,19 +266,21 @@ class ENLAPredictor:
             if prob_col in predictions_df.columns:
                 predictions_df['confidence'] = predictions_df[prob_col].astype(float)
 
-            logger.info(f"Predictions generated for '{area}' year={year} | count={len(predictions_df)}")
+            logger.info(f"Predictions generated for '{area}' year={year} version={version} | count={len(predictions_df)}")
 
             return predictions_df
 
         except BigQueryConnectionError as e:
-            error_msg = f"BigQuery error predicting for '{area}' year={year}: {str(e)}"
+            error_msg = f"BigQuery error predicting for '{area}' year={year} version={version}: {str(e)}"
             logger.error(error_msg)
             raise PredictionError(error_msg)
 
         except Exception as e:
-            error_msg = f"Unexpected error predicting for '{area}' year={year}: {str(e)}"
+            error_msg = f"Error predicting for '{area}' year={year} version={version}: {str(e)}"
             logger.error(error_msg, exc_info=True)
             raise PredictionError(error_msg)
+        finally:
+            self.model_version = original_version
 
     def _predict_all_years_for_area(self, area: str) -> pd.DataFrame:
         """
@@ -503,16 +549,19 @@ class ENLAPredictor:
             logger.error(error_msg, exc_info=True)
             raise PredictionError(error_msg)
 
-    def run_full_prediction_pipeline(self, model_version: str = 'v1') -> PredictionResult:
+    def run_full_prediction_pipeline(self, model_version: str = 'v2') -> PredictionResult:
         """
-        Complete prediction pipeline:
-        1. Verify all models exist
-        2. Generate predictions for all areas
+        Complete prediction pipeline with fallback support:
+        1. Verify models exist (v2 with fallback to v1)
+        2. Generate predictions for all areas (with automatic v2→v1 fallback)
         3. Save to BigQuery
         4. Return summary
 
+        If a v2 model doesn't exist for an area, the pipeline will
+        automatically fall back to the v1 (Logistic Regression) model.
+
         Args:
-            model_version: Model version to use
+            model_version: Model version to use (default: 'v2')
 
         Returns:
             PredictionResult with pipeline summary
@@ -521,7 +570,7 @@ class ENLAPredictor:
 
         logger.info("=" * 60)
         logger.info("Starting Full Prediction Pipeline")
-        logger.info(f"Model version: {model_version}")
+        logger.info(f"Primary model version: {model_version} (fallback: v1)")
         logger.info("=" * 60)
 
         try:
@@ -529,7 +578,7 @@ class ENLAPredictor:
             if model_version != self.model_version:
                 self.model_version = model_version
 
-            # Step 1: Verify all models exist
+            # Step 1: Verify models exist (check v2 first, fall back to v1)
             from src.models.trainer import ModelTrainer
             trainer = ModelTrainer(
                 bigquery_client=self.bq_manager,
@@ -537,21 +586,34 @@ class ENLAPredictor:
                 dataset_id=self.dataset_id,
             )
 
-            missing_models = []
-            for area in AREAS:
-                if not trainer.check_model_exists(area, self.model_version):
-                    if area in YEAR_SPECIFIC_AREAS:
-                        missing_models.append(f"{area} (years: {PREDICTION_YEARS})")
-                    else:
-                        missing_models.append(area)
+            fallback_areas = []
+            completely_missing = []
 
-            if missing_models:
+            for area in AREAS:
+                v2_exists = trainer.check_model_exists(area, 'v2')
+                v1_exists = trainer.check_model_exists(area, 'v1')
+
+                if not v2_exists and v1_exists:
+                    fallback_areas.append(area)
+                    logger.warning(
+                        f"v2 model not found for '{area}', will use v1 fallback"
+                    )
+                elif not v2_exists and not v1_exists:
+                    completely_missing.append(area)
+
+            if fallback_areas:
+                logger.warning(
+                    f"Areas using v1 fallback: {fallback_areas}. "
+                    f"Train v2 models to use Boosted Tree Classifier."
+                )
+
+            if completely_missing:
                 raise PredictionError(
-                    f"Models not found for areas: {missing_models}. "
+                    f"Models not found (neither v2 nor v1) for areas: {completely_missing}. "
                     f"Run training first."
                 )
 
-            logger.info("All models verified")
+            logger.info("Model verification complete")
 
             # Step 2: Generate predictions for all areas
             predictions = self.predict_all_areas()
@@ -610,13 +672,13 @@ class ENLAPredictor:
 # ==========================================
 
 def run_prediction_pipeline(bigquery_client: Optional[BigQueryClientManager] = None,
-                            model_version: str = 'v1') -> PredictionResult:
+                            model_version: str = 'v2') -> PredictionResult:
     """
-    Run the complete prediction pipeline.
+    Run the complete prediction pipeline with fallback support.
 
     Args:
         bigquery_client: BigQueryClientManager instance (optional)
-        model_version: Model version to use
+        model_version: Model version to use (default: 'v2', falls back to 'v1')
 
     Returns:
         PredictionResult with execution summary
